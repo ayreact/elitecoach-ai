@@ -1,0 +1,13 @@
+.env
+venv/
+venv
+__pycache__/
+.pytest_cache/
+*.db
+error_out.txt
+test_out.txt
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+EliteCoachAI_MVP_Spec.pdf.txt
+Microservice_architecture.pdf.txt
