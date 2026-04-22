@@ -1,14 +1,22 @@
+import os
 import httpx
 from fastapi import Request, HTTPException, status
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Core gateway validation
-async def validate_user(request: Request):
+# Fix Bug 4: URL loaded from env var so it can differ between local/staging/production
+# without a code redeploy.
+IDENTITY_SERVICE_URL = os.getenv(
+    "IDENTITY_SERVICE_URL",
+    "https://api.elitecoach.ai/v1/identity/users/me"
+)
+
+
+async def validate_user(request: Request) -> dict:
     """
-    Extracts the Bearer JWT from headers and securely makes an asynchronous
-    HTTP GET request to the Identity Service (Service A) to validate.
+    Extracts the Bearer JWT from headers and makes an async HTTP GET request to
+    the Identity Service (Service A) to validate the token.
     Returns the user data dict if successful, raises 401/502 otherwise.
     """
     auth_header = request.headers.get("Authorization")
@@ -18,20 +26,18 @@ async def validate_user(request: Request):
             detail="Missing or invalid Authorization header",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     token = auth_header.split(" ")[1]
-    identity_url = "https://api.elitecoach.ai/v1/identity/users/me"
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(
-                identity_url,
+                IDENTITY_SERVICE_URL,
                 headers={"Authorization": f"Bearer {token}"}
             )
-            
+
             if response.status_code == 200:
                 user_data = response.json()
-                # Must contain at minimum 'id' depending on Service A contract
                 if "id" not in user_data:
                     logger.error(f"Identity service returned malformed data: {user_data}")
                     raise HTTPException(

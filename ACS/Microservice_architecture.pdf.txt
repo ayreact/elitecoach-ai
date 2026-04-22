@@ -1,0 +1,100 @@
+Technical Architecture Documentation:
+Elite Coach AI
+1. Architectural Principles
+The Elite Coach AI backend is designed as a decoupled microservice architecture. This
+ensures that high-traffic services (like the AI Tutor) can scale independently of
+administrative services (like Enterprise Reporting), maintaining performance across the
+“Africa-first” deployment regions.
+2. Standardized API Protocol
+Base URL Pattern
+https://api.elitecoach.ai/v1/{service-name}/{resource}
+Global Conventions
+Format: JSON
+Authentication: Bearer JWT (issued by Identity Service)
+Versioning: Header-based or URL-pathed (v1)
+Rate Limiting: Managed at the API Gateway level to protect AI compute resources.
+3. Service Decomposition & API Catalog
+A. Identity & Access Service ( /identity )
+Role: Centralized authentication and persona-based authorization.
+Key APIs:
+POST /auth/login  – Authenticates user and returns a token with persona
+claims (Learner, Tutor, Admin).
+POST /auth/register  – Handles onboarding for individual and corporate
+users.
+GET /users/me  – Retrieves current user profile and learning state.
+B. AI Tutor Engine ( /ai-tutor )
+Role: Manages the RAG (Retrieval-Augmented Generation) pipeline and
+conversational state.
+Key APIs:
+POST /sessions/start  – Initializes a new learning session for a specific
+module.
+POST /chat/completions  – Accepts user prompts, injects context, and
+returns AI responses.
+GET /sessions/{id}/context  – Retrieves long-term memory and history for
+the AI tutor.
+C. Content & Curriculum Service ( /content )
+Role: Manages the knowledge base, course materials, and vector search.
+Key APIs:
+GET /courses  – Lists available courses based on user eligibility.
+GET /courses/{id}/curriculum  – Returns the full structure (modules/lessons)
+of a course.
+POST /internal/ingest  – Chunks and embeds new course data into the
+vector store.
+D. Assessment & Certification Service ( /assessment )
+Role: Validates learning outcomes and issues credentials.
+Key APIs:
+POST /quiz/submit  – Evaluates user answers and updates the Skill
+Taxonomy.
+GET /certificates/{uid}  – Generates or validates a unique digital certificate.
+GET /stats/skill-gap  – Calculates the user’s progress against industry
+benchmarks.
+E. Human-in-the-Loop (HITL) Service ( /expert )
+Role: Manages the bridge between AI and human subject matter experts.
+Key APIs:
+POST /escalate  – Flags an AI interaction for human review.
+GET /queue/active  – Provides human tutors with a dashboard of pending
+learner queries.
+POST /expert/respond  – Posts a human-verified answer back to the
+learner’s session.
+F. Enterprise Administration Service ( /enterprise )
+Role: Business-to-Business (B2B) management and workforce analytics.
+Key APIs:
+GET /org/analytics  – Aggregates completion rates and ROI for HR Directors.
+POST /org/seats/invite  – Manages bulk employee onboarding.
+G. Engagement & Notification Service ( /engagement )
+Role: Proactive retention through multi-channel nudges.
+Key APIs:
+POST /notifications/whatsapp  – Triggers personalized reminders to the
+learner’s phone.
+POST /notifications/email  – Sends weekly progress summaries.
+4. System Connectivity & Integration Flow
+The services connect using a hybrid communication model:
+1. Synchronous (Request/Response)
+Used for real-time interactions where immediate feedback is required.
+Flow: Learner 
+ AI Tutor Service 
+ Content Service (to get RAG context) 
+Identity Service (to verify access).
+2. Asynchronous (Event-Driven)
+Used for background tasks and “Africa-first” resilience in low-bandwidth scenarios.
+Flow: Assessment Service (Quiz Passed) 
+ Publish Event 
+ Engagement Service
+(Triggers “Congrats” WhatsApp nudge) & Enterprise Service (Updates HR
+Dashboard).
+3. Service Mesh/Internal Gateway
+→
+→
+→
+→
+→
+All internal traffic is routed through a private network, ensuring that sensitive data (like
+Enterprise user lists) is never exposed to the public internet during inter-service
+communication.
+5. Security & Data Integrity
+Persona Isolation: Database schemas are partitioned by Persona and
+Organization (Multi-tenancy).
+NDPR Compliance: Data residency and privacy controls are enforced at the
+service level.
+RAG Grounding: The AI engine is strictly forbidden from querying outside the
+Content Service to prevent hallucinations.
