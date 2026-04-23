@@ -1,5 +1,8 @@
 import os
 import logging
+from dotenv import load_dotenv
+
+load_dotenv()  
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,7 +14,6 @@ from .database import engine, Base, SessionLocal
 
 logger = logging.getLogger(__name__)
 
-# Ensure certs dir exists for local-dev fallback
 os.makedirs("certs", exist_ok=True)
 
 _DEFAULT_BENCHMARKS = [
@@ -77,7 +79,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Only serve certs locally — in production Cloudinary CDN is used
 _cloudinary_configured = all([
     os.getenv("CLOUDINARY_CLOUD_NAME"),
     os.getenv("CLOUDINARY_API_KEY"),

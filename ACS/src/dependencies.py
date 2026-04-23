@@ -8,8 +8,7 @@ logger = logging.getLogger(__name__)
 # Fix Bug 4: URL loaded from env var so it can differ between local/staging/production
 # without a code redeploy.
 IDENTITY_SERVICE_URL = os.getenv(
-    "IDENTITY_SERVICE_URL",
-    "https://api.elitecoach.ai/v1/identity/users/me"
+    "IDENTITY_SERVICE_URL"
 )
 
 

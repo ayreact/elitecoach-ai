@@ -1,7 +1,10 @@
 import os
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 import logging
+
+load_dotenv()  # Ensure .env is loaded before reading env vars
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

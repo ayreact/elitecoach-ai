@@ -71,28 +71,61 @@ def _apply_skill_score(profile: LearnerProfile, domain_key: str, score: float) -
     profile.learning_velocity = round(profile.learning_velocity + 1.5, 2)
 
 
-async def _notify_engagement(user_id: str, course_id: int, score: float, assessment_id: str) -> None:
+async def _notify_engagement(
+    user_id: str,
+    course_id: int,
+    score: float,
+    user_email: str | None = None,
+    user_phone: str | None = None,
+) -> None:
     """
-    Fire-and-forget async notification to the Engagement Service (Service G).
-    Called via BackgroundTasks so it never blocks the quiz submit response.
-    Resolves Conflict #7 — no async event on quiz pass.
+    Fire-and-forget notification via Service G (Engagement & Notification Service).
+    Calls POST /api/v1/notification/send with Service G's ChannelRequest schema:
+      {channel, body, to, subject}
+    Sends WhatsApp (primary channel for Nigerian learners) and/or email
+    depending on what contact info is available in the Identity Service JWT response.
+    Called via BackgroundTasks — never blocks the quiz submit response.
     """
-    if not ENGAGEMENT_SERVICE_URL:
+    base_url = ENGAGEMENT_SERVICE_URL.rstrip("/") if ENGAGEMENT_SERVICE_URL else ""
+    if not base_url:
         return
+
+    endpoint = f"{base_url}/api/v1/notification/send"
+    message_body = (
+        f"Congratulations! You scored {score:.0f}% on Course {course_id} "
+        f"and have passed. Keep it up on Elite Coach AI!"
+    )
+    subject = f"You passed Course {course_id} on Elite Coach AI!"
+
+    # Build one request per available channel.
+    # WhatsApp is the primary channel per the MVP spec (Nigerian learners).
+    notifications = []
+    if user_phone:
+        notifications.append({
+            "channel": "whatsapp",
+            "to": user_phone,
+            "body": message_body,
+            "subject": subject,
+        })
+    if user_email:
+        notifications.append({
+            "channel": "email",
+            "to": user_email,
+            "body": message_body,
+            "subject": subject,
+        })
+
+    if not notifications:
+        logger.warning(f"Cannot notify user {user_id}: no email or phone in identity payload.")
+        return
+
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            await client.post(
-                ENGAGEMENT_SERVICE_URL,
-                json={
-                    "event": "quiz_passed",
-                    "user_id": user_id,
-                    "course_id": course_id,
-                    "score": score,
-                    "assessment_id": assessment_id,
-                },
-            )
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for notif in notifications:
+                await client.post(endpoint, json=notif)
+                logger.info(f"Notified user {user_id} via {notif['channel']} for course {course_id}")
     except Exception as e:
-        logger.warning(f"Engagement service notification failed (non-blocking): {e}")
+        logger.warning(f"Engagement notification failed for user {user_id} (non-blocking): {e}")
 
 
 def _get_benchmark_targets(db: Session, goal: str) -> dict:
@@ -168,7 +201,14 @@ async def submit_quiz_score(
     if passed:
         domain_key = rubric.skill_domain or f"course_{payload.course_id}_domain"
         _apply_skill_score(profile, domain_key, score)
-        background_tasks.add_task(_notify_engagement, payload.user_id, payload.course_id, score, result.id)
+        background_tasks.add_task(
+            _notify_engagement,
+            payload.user_id,
+            payload.course_id,
+            score,
+            user.get("email"),
+            user.get("phone") or user.get("phone_number"),
+        )
 
     db.commit()
     db.refresh(result)
@@ -239,7 +279,14 @@ async def submit_inline_quiz(
     if passed:
         domain_key = payload.skill_domain or f"course_{payload.course_id}_domain"
         _apply_skill_score(profile, domain_key, score)
-        background_tasks.add_task(_notify_engagement, payload.user_id, payload.course_id, score, result.id)
+        background_tasks.add_task(
+            _notify_engagement,
+            payload.user_id,
+            payload.course_id,
+            score,
+            user.get("email"),
+            user.get("phone") or user.get("phone_number"),
+        )
 
     db.commit()
     db.refresh(result)
