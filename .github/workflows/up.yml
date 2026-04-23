@@ -12,5 +12,5 @@ jobs:
       - name: Ping Service C (CCMS)
         run: curl -I https://elitecoach-ai-ccms.onrender.com/health
       
-      - name: Ping Service A (ACS)
+      - name: Ping Service D (ACS)
         run: curl -I https://elitecoach-ai-acs.onrender.com/health
