@@ -10,5 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping Service C (CCMS)
-        run: curl -I https://elitecoach-ai-th9z.onrender.com/health
-        
+        run: curl -I https://elitecoach-ai-ccms.onrender.com/health
+      
+      - name: Ping Service A (ACS)
+        run: curl -I https://elitecoach-ai-acs.onrender.com/health
