@@ -21,7 +21,7 @@ async def get_current_user(authorization: Optional[str] = Header(default=None)):
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{IDENTITY_SERVICE_URL}/v1//users/profile", # Defined via Microservice Architecture pattern
+                f"{IDENTITY_SERVICE_URL}/api/v1/users/profile", # Defined via Microservice Architecture pattern
                 headers={"Authorization": authorization},
                 timeout=5.0
             )
