@@ -1,4 +1,5 @@
-from fastapi import Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 import httpx
 import os
@@ -7,17 +8,14 @@ import os
 # you can point this to their local server (e.g. http://localhost:8001) or their deployed service.
 IDENTITY_SERVICE_URL = os.getenv("IDENTITY_SERVICE_URL", "http://localhost:8001")
 
-async def get_current_user(authorization: Optional[str] = Header(default=None)):
+security = HTTPBearer()
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """
     Validates the bearer token by making an HTTP call to the external Identity Service.
     """
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid Authorization header",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-        
+    authorization = f"Bearer {credentials.credentials}"
+    
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -27,11 +25,8 @@ async def get_current_user(authorization: Optional[str] = Header(default=None)):
             )
             
             if response.status_code == 200:
-                # The Identity Service verifies the token and returns the full user object
                 user_data = response.json()
                 
-                # Map 'userType' from Identity Service to 'role' expected by Service C
-                # and ensure Title Case (e.g., 'learner' -> 'Learner')
                 if "userType" in user_data:
                     user_data["role"] = user_data["userType"].title()
                     
