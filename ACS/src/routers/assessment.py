@@ -68,7 +68,10 @@ def _apply_skill_score(profile: LearnerProfile, domain_key: str, score: float) -
     current_scores = dict(profile.skill_scores) if profile.skill_scores else {}
     current_scores[domain_key] = round(current_scores.get(domain_key, 0.0) + score, 2)
     profile.skill_scores = current_scores
-    profile.learning_velocity = round(profile.learning_velocity + 1.5, 2)
+    
+    # Newly created un-flushed profiles might have learning_velocity as None
+    current_velocity = profile.learning_velocity or 0.0
+    profile.learning_velocity = round(current_velocity + 1.5, 2)
 
 
 async def _notify_engagement(
@@ -120,12 +123,15 @@ async def _notify_engagement(
         return
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             for notif in notifications:
-                await client.post(endpoint, json=notif)
+                response = await client.post(endpoint, json=notif)
+                response.raise_for_status()  # This will raise an exception for 4xx/5xx status codes
                 logger.info(f"Notified user {user_id} via {notif['channel']} for course {course_id}")
+    except httpx.HTTPStatusError as e:
+        logger.warning(f"Engagement notification rejected by service (HTTP {e.response.status_code}): {e.response.text}")
     except Exception as e:
-        logger.warning(f"Engagement notification failed for user {user_id} (non-blocking): {e}")
+        logger.warning(f"Engagement notification failed for user {user_id} (non-blocking): {type(e).__name__} - {str(e)}")
 
 
 def _get_benchmark_targets(db: Session, goal: str) -> dict:

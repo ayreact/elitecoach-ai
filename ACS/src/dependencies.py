@@ -1,6 +1,7 @@
 import os
 import httpx
-from fastapi import Request, HTTPException, status
+from fastapi import HTTPException, status, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import logging
 
 logger = logging.getLogger(__name__)
@@ -11,38 +12,50 @@ IDENTITY_SERVICE_URL = os.getenv(
     "IDENTITY_SERVICE_URL"
 )
 
+security = HTTPBearer()
 
-async def validate_user(request: Request) -> dict:
+async def validate_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
     """
     Extracts the Bearer JWT from headers and makes an async HTTP GET request to
     the Identity Service (Service A) to validate the token.
     Returns the user data dict if successful, raises 401/502 otherwise.
     """
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid Authorization header",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    token = credentials.credentials
 
-    token = auth_header.split(" ")[1]
 
     try:
+        # Normalize the URL just in case the env var is missing the /api/ prefix
+        target_url = IDENTITY_SERVICE_URL
+        if "/v1/users" in target_url and "/api/v1" not in target_url:
+            target_url = target_url.replace("/v1/users", "/api/v1/users")
+            
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(
-                IDENTITY_SERVICE_URL,
+                target_url,
                 headers={"Authorization": f"Bearer {token}"}
             )
 
             if response.status_code == 200:
-                user_data = response.json()
-                if "id" not in user_data:
-                    logger.error(f"Identity service returned malformed data: {user_data}")
+                raw_data = response.json()
+                # Map the Identity Service response to what Service D expects
+                user_data = {}
+                
+                # Check for 'userId' (new format) or fallback to 'id'
+                if "userId" in raw_data:
+                    user_data["id"] = raw_data["userId"]
+                elif "id" in raw_data:
+                    user_data["id"] = raw_data["id"]
+                else:
+                    logger.error(f"Identity service returned malformed data: {raw_data}")
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail="Invalid token payload from identity service",
                     )
+                
+                # Map other fields
+                user_data["email"] = raw_data.get("email")
+                user_data["name"] = f"{raw_data.get('firstName', '')} {raw_data.get('lastName', '')}".strip()
+                
                 return user_data
             elif response.status_code in (401, 403):
                 raise HTTPException(
