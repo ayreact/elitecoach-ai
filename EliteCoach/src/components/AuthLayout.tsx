@@ -1,5 +1,6 @@
 import { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
+import { Logo } from "./Logo";
 
 export function AuthLayout({
   title,
@@ -14,11 +15,8 @@ export function AuthLayout({
     <div className="min-h-screen grid lg:grid-cols-2">
       {/* Left brand panel */}
       <div className="hidden lg:flex bg-navy text-navy-foreground p-12 flex-col justify-between relative overflow-hidden">
-        <Link to="/" className="flex items-center gap-2 relative z-10">
-          <div className="h-7 w-7 bg-primary flex items-center justify-center">
-            <span className="text-white font-bold text-sm">E</span>
-          </div>
-          <span className="text-lg font-bold">EliteCoach</span>
+        <Link to="/" className="flex items-center">
+          <Logo size={28} variant="light" />
         </Link>
 
         <div className="relative z-10">

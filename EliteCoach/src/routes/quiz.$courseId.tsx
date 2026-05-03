@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, redirect } from "@tanstack/react-router";
 import { requireLearner } from "@/lib/auth-guard";
 import { useEffect, useState } from "react";
 import {
@@ -82,7 +82,16 @@ function parseQuestions(payload: unknown): Question[] {
 }
 
 export const Route = createFileRoute("/quiz/$courseId")({
-    beforeLoad: () => { requireLearner(); },
+    beforeLoad: async () => { 
+        try {
+            await requireLearner(); 
+        } catch (err) {
+            console.error("Auth guard failed:", err);
+            throw redirect({
+                to: "/login",
+            });
+        }
+    },
     head: () => ({ meta: [{ title: "Quiz — EliteCoach" }] }),
     validateSearch: (search: Record<string, unknown>) => ({
         level: (search.level as string) ?? "beginner",
@@ -97,7 +106,6 @@ function QuizPage() {
     const navigate = useNavigate();
     const user = useAuthStore((s) => s.user);
     const [questions, setQuestions] = useState<Question[]>([]);
-    const [loading, setLoading] = useState(true);
     const [idx, setIdx] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
@@ -110,6 +118,11 @@ function QuizPage() {
     const [showConfig, setShowConfig] = useState(true);
     const [configLevel, setConfigLevel] = useState(searchLevel || "beginner");
     const [configCount, setConfigCount] = useState(searchCount || 5);
+    
+    // IMPORTANT: Both of these must start as false so the modal shows first
+    const [startFetch, setStartFetch] = useState(false);
+    const [loading, setLoading] = useState(false); 
+    
     const [generatingCert, setGeneratingCert] = useState(false);
     const [certificate, setCertificate] = useState<{
         id: string;
@@ -119,6 +132,10 @@ function QuizPage() {
     } | null>(null);
 
     useEffect(() => {
+        if (!startFetch) return;
+
+        setLoading(true);
+
         let alive = true;
         const numericCourseId = coerceIntegerId(courseId);
 
@@ -142,7 +159,6 @@ function QuizPage() {
             };
         }
 
-        // Fetch curriculum to get course title
         contentApi
             .get(`/courses/${numericCourseId}/curriculum`)
             .then((curriculumRes) => {
@@ -154,10 +170,8 @@ function QuizPage() {
                     ? normalizeCourse(curriculumData)
                     : null;
 
-                // Use the course title as the topic for quiz generation
                 const topic = matchedCourse?.title ?? "Course assessment";
 
-                // Generate quiz with the correct topic, level, and question count
                 return assessmentsApi.post(
                     "/api/v1/assessments/generate-quiz",
                     null,
@@ -175,7 +189,6 @@ function QuizPage() {
                 if (!alive || !quizRes) return;
                 const data = parseQuestions(quizRes.data);
                 if (data.length === 0) {
-                    // Fallback demo question
                     setQuestions([
                         {
                             id: "demo-1",
@@ -218,13 +231,7 @@ function QuizPage() {
         return () => {
             alive = false;
         };
-    }, [courseId, configLevel, configCount]);
-
-    const current = questions[idx];
-    const progress =
-        questions.length === 0
-            ? 0
-            : Math.round(((idx + 1) / questions.length) * 100);
+    }, [courseId, configLevel, configCount, startFetch]);
 
     const submit = async () => {
         setSubmitting(true);
@@ -234,7 +241,6 @@ function QuizPage() {
                 throw new Error("This quiz requires a numeric course ID.");
             }
 
-            // Use Service D (ACS) inline quiz submit endpoint
             const res = await acsApi.post("/v1/assessment/quiz/submit-inline", {
                 user_id: user?.id || user?.email || "unknown",
                 course_id: numericCourseId,
@@ -253,7 +259,6 @@ function QuizPage() {
             const score = Number((result as any).score ?? 0);
             const passed = Boolean((result as any).passed ?? score >= 70);
 
-            // Calculate per-question results based on submitted answers vs correct answers
             const per: { id: string; correct: boolean }[] = questions.map(
                 (q) => ({
                     id: q.id,
@@ -278,7 +283,6 @@ function QuizPage() {
                 )
                 .catch(() => {});
         } catch (err) {
-            // local scoring fallback
             const correct = questions.filter(
                 (q) => answers[q.id] === q.correct_answer
             ).length;
@@ -318,13 +322,6 @@ function QuizPage() {
             }
 
             const userId = user.id || user.email || "unknown";
-            console.log(
-                "Generating certificate for user:",
-                userId,
-                "course:",
-                numericCourseId
-            );
-
             const res = await acsApi.get(
                 `/v1/assessment/certificates/${userId}`,
                 {
@@ -334,7 +331,6 @@ function QuizPage() {
                 }
             );
 
-            console.log("Certificate response:", res.data);
             const certData = unwrapApiData<any>(res.data);
             setCertificate({
                 id: certData.id,
@@ -345,45 +341,156 @@ function QuizPage() {
 
             toast.success("Certificate generated successfully!");
 
-            // Optionally open PDF in new window
             if (certData.pdf_url) {
                 window.open(certData.pdf_url, "_blank");
             }
         } catch (err: any) {
             console.error("Certificate generation error:", err);
-
-            // More detailed error logging
             if (err.response?.status === 502) {
-                toast.error(
-                    "Certificate service is temporarily unavailable. Please try again in a moment."
-                );
+                toast.error("Certificate service is temporarily unavailable. Please try again in a moment.");
             } else if (err.response?.status === 401) {
                 toast.error("Your session has expired. Please log in again.");
             } else if (err.response?.status === 400) {
-                toast.error(
-                    "Invalid request. Please ensure the course is valid."
-                );
+                toast.error("Invalid request. Please ensure the course is valid.");
             } else {
-                toast.error(
-                    extractErrorMessage(err, "Could not generate certificate")
-                );
+                toast.error(extractErrorMessage(err, "Could not generate certificate"));
             }
         } finally {
             setGeneratingCert(false);
         }
     };
 
-    if (loading) {
+    const forceDownload = async (e: React.MouseEvent<HTMLAnchorElement>) => {
+        e.preventDefault();
+        
+        if (!certificate?.pdf_url) return;
+
+        try {
+            const response = await fetch(certificate.pdf_url);
+            const blob = await response.blob();
+            
+            const blobUrl = window.URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = blobUrl;
+            
+            link.download = `EliteCoach_Certificate.pdf`;
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(blobUrl);
+        } catch (err) {
+            console.error("Failed to force download, falling back to new tab", err);
+            window.open(certificate.pdf_url, "_blank");
+        }
+    };
+
+    const current = questions[idx];
+    const progress = questions.length === 0 ? 0 : Math.round(((idx + 1) / questions.length) * 100);
+    const selected = current ? answers[current.id] : undefined;
+    const isLast = idx === questions.length - 1;
+
+
+    // ==========================================
+    // UI RENDER SEQUENCE
+    // ==========================================
+
+    // 1. CONFIGURATION STATE
+    if (showConfig) {
         return (
             <div className="min-h-screen bg-surface">
                 <TopNav />
-                <div className="container-1200 py-20">
-                    <div className="h-64 bg-surface-card animate-pulse" />
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => navigate({ to: "/courses" })} />
+                    <div className="relative bg-white rounded-lg shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+                        <div className="bg-primary p-6 text-primary-foreground text-center">
+                            <h3 className="text-xl font-bold mb-1">Assessment Settings</h3>
+                            <p className="opacity-80 text-sm">Configure your quiz</p>
+                        </div>
+                        <div className="p-8 space-y-6">
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                    Difficulty Level
+                                </label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {["beginner", "intermediate", "advanced"].map((lvl) => (
+                                        <button
+                                            key={lvl}
+                                            onClick={() => setConfigLevel(lvl)}
+                                            className={`py-2 px-1 text-xs font-bold rounded border-2 transition-all capitalize ${
+                                                configLevel === lvl
+                                                    ? "border-primary bg-primary/10 text-primary"
+                                                    : "border-slate-100 hover:border-slate-300 text-slate-500"
+                                            }`}
+                                        >
+                                            {lvl}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                    Number of Questions
+                                </label>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {[5, 10, 15, 20].map((num) => (
+                                        <button
+                                            key={num}
+                                            onClick={() => setConfigCount(num)}
+                                            className={`py-2 rounded border-2 font-bold text-sm transition-all ${
+                                                configCount === num
+                                                    ? "border-primary bg-primary/10 text-primary"
+                                                    : "border-slate-100 hover:border-slate-300 text-slate-500"
+                                            }`}
+                                        >
+                                            {num}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="pt-4 flex gap-3">
+                                <button
+                                    onClick={() => navigate({ to: "/courses" })}
+                                    className="flex-1 py-3 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setShowConfig(false);
+                                        setStartFetch(true);
+                                    }}
+                                    className="flex-[2] py-3 bg-primary text-primary-foreground font-bold text-sm rounded flex items-center justify-center shadow-lg hover:bg-primary-hover transition-all"
+                                >
+                                    Start Assessment
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         );
     }
 
+    // 2. LOADING STATE
+    if (loading) {
+        return (
+            <div className="min-h-screen bg-surface">
+                <TopNav />
+                <div className="container-1200 py-20 flex flex-col items-center justify-center min-h-[60vh] text-center animate-in fade-in duration-500">
+                    <div className="w-16 h-16 border-4 border-border border-t-primary rounded-full animate-spin mb-6" />
+                    <h2 className="text-2xl font-bold tracking-tight mb-2">Generating your assessment...</h2>
+                    <p className="text-text-secondary max-w-sm">
+                        Our AI tutor is crafting {configCount} questions at the {configLevel} level. This usually takes just a few seconds.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    // 3. RESULT STATE
     if (result) {
         const ringPct = Math.min(100, Math.max(0, result.score));
         return (
@@ -392,88 +499,47 @@ function QuizPage() {
                 <div className="container-1200 py-16 max-w-2xl">
                     <div className="card-base text-center py-12">
                         <div className="relative w-40 h-40 mx-auto mb-6">
-                            <svg
-                                viewBox="0 0 100 100"
-                                className="w-full h-full -rotate-90"
-                            >
+                            <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
+                                <circle cx="50" cy="50" r="44" stroke="var(--border)" strokeWidth="8" fill="none" />
                                 <circle
-                                    cx="50"
-                                    cy="50"
-                                    r="44"
-                                    stroke="var(--border)"
-                                    strokeWidth="8"
-                                    fill="none"
-                                />
-                                <circle
-                                    cx="50"
-                                    cy="50"
-                                    r="44"
-                                    stroke="var(--coral)"
-                                    strokeWidth="8"
-                                    fill="none"
+                                    cx="50" cy="50" r="44" stroke="var(--coral)" strokeWidth="8" fill="none"
                                     strokeDasharray={`${(ringPct / 100) * 276.46} 276.46`}
                                     strokeLinecap="round"
                                 />
                             </svg>
                             <div className="absolute inset-0 flex items-center justify-center">
-                                <span className="text-4xl font-bold">
-                                    {ringPct}%
-                                </span>
+                                <span className="text-4xl font-bold">{ringPct}%</span>
                             </div>
                         </div>
-                        <span
-                            className={`label-caps inline-block px-3 py-1 rounded-sm ${
-                                result.passed
-                                    ? "bg-success/10 text-success"
-                                    : "bg-destructive/10 text-destructive"
-                            }`}
-                        >
+                        <span className={`label-caps inline-block px-3 py-1 rounded-sm ${
+                            result.passed ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"
+                        }`}>
                             {result.passed ? "Passed" : "Did not pass"}
                         </span>
-                        <h1 className="text-3xl font-bold mt-4 mb-2">
-                            Quiz complete
-                        </h1>
+                        <h1 className="text-3xl font-bold mt-4 mb-2">Quiz complete</h1>
                         <p className="text-text-secondary">
-                            You answered {questions.length} question
-                            {questions.length === 1 ? "" : "s"}.
+                            You answered {questions.length} question{questions.length === 1 ? "" : "s"}.
                         </p>
                     </div>
 
                     <div className="card-base mt-6">
-                        <h3 className="font-semibold mb-4">
-                            Per-question breakdown
-                        </h3>
+                        <h3 className="font-semibold mb-4">Per-question breakdown</h3>
                         <div className="divide-y divide-border">
                             {(result.perQuestion ?? []).map((p, i) => {
-                                const q = questions.find(
-                                    (qq) => qq.id === p.id
-                                );
+                                const q = questions.find((qq) => qq.id === p.id);
                                 return (
-                                    <div
-                                        key={p.id}
-                                        className="py-3 flex items-start gap-3"
-                                    >
-                                        <span
-                                            className={`w-6 h-6 flex items-center justify-center shrink-0 ${
-                                                p.correct
-                                                    ? "bg-success text-white"
-                                                    : "bg-destructive text-white"
-                                            }`}
-                                        >
-                                            {p.correct ? (
-                                                <Check size={14} />
-                                            ) : (
-                                                <X size={14} />
-                                            )}
+                                    <div key={p.id} className="py-3 flex items-start gap-3">
+                                        <span className={`w-6 h-6 flex items-center justify-center shrink-0 ${
+                                            p.correct ? "bg-success text-white" : "bg-destructive text-white"
+                                        }`}>
+                                            {p.correct ? <Check size={14} /> : <X size={14} />}
                                         </span>
                                         <div className="text-sm">
                                             <div className="font-medium">
-                                                Q{i + 1}.{" "}
-                                                {q?.question ?? "Question"}
+                                                Q{i + 1}. {q?.question ?? "Question"}
                                             </div>
                                             <div className="text-text-secondary text-xs mt-1">
-                                                Your answer:{" "}
-                                                {answers[p.id] ?? "—"}
+                                                Your answer: {answers[p.id] ?? "—"}
                                             </div>
                                         </div>
                                     </div>
@@ -484,33 +550,24 @@ function QuizPage() {
 
                     {certificate && (
                         <div className="bg-success/10 border border-success/30 rounded-lg p-6 mt-8">
-                            <h3 className="font-semibold text-success mb-3">
-                                Certificate Generated!
-                            </h3>
+                            <h3 className="font-semibold text-success mb-3">Certificate Generated!</h3>
                             <p className="text-sm text-text-secondary mb-4">
-                                Verification Code:{" "}
-                                <code className="font-mono text-xs bg-surface-card px-2 py-1 rounded">
-                                    {certificate.verification_code}
-                                </code>
+                                Verification Code: <code className="font-mono text-xs bg-surface-card px-2 py-1 rounded">{certificate.verification_code}</code>
                             </p>
                             <div className="flex gap-2">
                                 {certificate.pdf_url && (
-                                    <a
-                                        href={certificate.pdf_url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
+                                    <a 
+                                        href={certificate.pdf_url} 
+                                        onClick={forceDownload}
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
                                         className="flex-1 h-10 inline-flex items-center justify-center bg-success text-white font-medium rounded hover:opacity-90 transition-opacity text-sm"
                                     >
                                         Download PDF
                                     </a>
                                 )}
                                 {certificate.linkedin_share_url && (
-                                    <a
-                                        href={certificate.linkedin_share_url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="flex-1 h-10 inline-flex items-center justify-center bg-blue-600 text-white font-medium rounded hover:opacity-90 transition-opacity text-sm"
-                                    >
+                                    <a href={certificate.linkedin_share_url} target="_blank" rel="noopener noreferrer" className="flex-1 h-10 inline-flex items-center justify-center bg-blue-600 text-white font-medium rounded hover:opacity-90 transition-opacity text-sm">
                                         Share on LinkedIn
                                     </a>
                                 )}
@@ -525,15 +582,10 @@ function QuizPage() {
                                 disabled={generatingCert}
                                 className="flex-1 h-12 bg-success text-white font-medium rounded hover:opacity-90 transition-opacity disabled:opacity-50"
                             >
-                                {generatingCert
-                                    ? "Generating..."
-                                    : "Generate Certificate"}
+                                {generatingCert ? "Generating..." : "Generate Certificate"}
                             </button>
                         )}
-                        <Link
-                            to="/dashboard"
-                            className="flex-1 h-12 inline-flex items-center justify-center bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors"
-                        >
+                        <Link to="/dashboard" className="flex-1 h-12 inline-flex items-center justify-center bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors">
                             Back to dashboard
                         </Link>
                         <button
@@ -553,22 +605,19 @@ function QuizPage() {
         );
     }
 
+    // 4. NO QUIZ AVAILABLE STATE
     if (!current) {
         return (
             <div className="min-h-screen bg-surface">
                 <TopNav />
                 <div className="container-1200 py-20 text-center">
-                    <p className="text-text-secondary">
-                        No quiz available for this course yet.
-                    </p>
+                    <p className="text-text-secondary">No quiz available for this course yet.</p>
                 </div>
             </div>
         );
     }
 
-    const selected = answers[current.id];
-    const isLast = idx === questions.length - 1;
-
+    // 5. ACTIVE QUIZ STATE
     return (
         <div className="min-h-screen bg-surface">
             <TopNav />
@@ -578,15 +627,10 @@ function QuizPage() {
                         <span className="label-caps text-text-secondary">
                             Question {idx + 1} of {questions.length}
                         </span>
-                        <span className="font-mono text-text-secondary">
-                            {progress}%
-                        </span>
+                        <span className="font-mono text-text-secondary">{progress}%</span>
                     </div>
                     <div className="h-1 w-full bg-border rounded-sm overflow-hidden">
-                        <div
-                            className="h-full bg-coral transition-all"
-                            style={{ width: `${progress}%` }}
-                        />
+                        <div className="h-full bg-coral transition-all" style={{ width: `${progress}%` }} />
                     </div>
                 </div>
 
@@ -600,12 +644,7 @@ function QuizPage() {
                         return (
                             <button
                                 key={opt}
-                                onClick={() =>
-                                    setAnswers((a) => ({
-                                        ...a,
-                                        [current.id]: opt,
-                                    }))
-                                }
+                                onClick={() => setAnswers((a) => ({ ...a, [current.id]: opt }))}
                                 className={`w-full text-left p-5 border-2 transition-colors ${
                                     isSel
                                         ? "border-primary bg-primary/5"
@@ -645,88 +684,6 @@ function QuizPage() {
                     )}
                 </div>
             </div>
-
-            {/* Config Modal Overlay */}
-            {showConfig && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-                    <div
-                        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-                        onClick={() => navigate({ to: "/courses" })}
-                    />
-                    <div className="relative bg-white rounded-lg shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
-                        <div className="bg-coral p-6 text-white text-center">
-                            <h3 className="text-xl font-bold mb-1">
-                                Assessment Settings
-                            </h3>
-                            <p className="text-white/80 text-sm">
-                                Configure your quiz
-                            </p>
-                        </div>
-                        <div className="p-8 space-y-6">
-                            <div className="space-y-3">
-                                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                                    Difficulty Level
-                                </label>
-                                <div className="grid grid-cols-3 gap-2">
-                                    {[
-                                        "beginner",
-                                        "intermediate",
-                                        "advanced",
-                                    ].map((lvl) => (
-                                        <button
-                                            key={lvl}
-                                            onClick={() => setConfigLevel(lvl)}
-                                            className={`py-2 px-1 text-xs font-bold rounded border-2 transition-all capitalize ${
-                                                configLevel === lvl
-                                                    ? "border-blue-600 bg-blue-50 text-blue-700"
-                                                    : "border-slate-100 hover:border-slate-300 text-slate-500"
-                                            }`}
-                                        >
-                                            {lvl}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="space-y-3">
-                                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                                    Number of Questions
-                                </label>
-                                <div className="grid grid-cols-4 gap-2">
-                                    {[5, 10, 15, 20].map((num) => (
-                                        <button
-                                            key={num}
-                                            onClick={() => setConfigCount(num)}
-                                            className={`py-2 rounded border-2 font-bold text-sm transition-all ${
-                                                configCount === num
-                                                    ? "border-blue-600 bg-blue-50 text-blue-700"
-                                                    : "border-slate-100 hover:border-slate-300 text-slate-500"
-                                            }`}
-                                        >
-                                            {num}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="pt-4 flex gap-3">
-                                <button
-                                    onClick={() => navigate({ to: "/courses" })}
-                                    className="flex-1 py-3 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={() => setShowConfig(false)}
-                                    className="flex-[2] py-3 bg-blue-600 text-white font-bold text-sm rounded flex items-center justify-center shadow-lg hover:bg-blue-700 transition-all"
-                                >
-                                    Start Assessment
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

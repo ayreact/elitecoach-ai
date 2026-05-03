@@ -133,61 +133,6 @@ function LearningPathPage() {
         <div className="min-h-screen flex flex-col bg-surface">
             <TopNav />
             <div className="container-1200 py-12 flex-1 relative">
-                {editing && (
-                    <div className="fixed inset-0 bg-navy/50 z-50 flex py-12 justify-center px-4 overflow-y-auto">
-                        <div className="bg-surface w-full max-w-md p-6 relative rounded-sm h-fit">
-                            <button
-                                onClick={() => setEditing(false)}
-                                className="absolute top-4 right-4 text-text-secondary hover:text-navy transition-colors"
-                                aria-label="Close"
-                            >
-                                <X size={20} />
-                            </button>
-                            <h2 className="text-xl font-bold mb-6 mt-2">
-                                Edit goal
-                            </h2>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium mb-1.5">
-                                        Target Role
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={goal}
-                                        onChange={(e) =>
-                                            setGoal(e.target.value)
-                                        }
-                                        placeholder="e.g. Data Scientist"
-                                        className="w-full h-11 px-3 border border-border bg-transparent outline-none focus:border-primary transition-colors"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium mb-1.5">
-                                        Time per week (hours)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        min={1}
-                                        max={40}
-                                        value={hours}
-                                        onChange={(e) =>
-                                            setHours(
-                                                parseInt(e.target.value) || 0
-                                            )
-                                        }
-                                        className="w-full h-11 px-3 border border-border bg-transparent outline-none focus:border-primary transition-colors"
-                                    />
-                                </div>
-                                <button
-                                    onClick={saveGoal}
-                                    className="w-full h-11 bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors mt-2"
-                                >
-                                    Save changes
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
                 <div className="flex items-end justify-between flex-wrap gap-4 mb-10">
                     <div>
                         <span className="label-caps text-coral mb-2 inline-block">
@@ -246,7 +191,8 @@ function LearningPathPage() {
                             <p className="text-base font-semibold">
                                 Next up:{" "}
                                 <span className="text-primary">
-                                    {path.next_course || "N/A"}
+                                    {/* Grab the title of the first item in the next_courses array */}
+                                    {(path as any)?.next_courses?.[0]?.title || "N/A"}
                                 </span>
                             </p>
                         </div>
@@ -324,7 +270,7 @@ function LearningPathPage() {
                     <div className="bg-surface-card w-full max-w-md p-8 rounded-lg relative">
                         <button
                             onClick={() => setEditing(false)}
-                            className="absolute top-4 right-4 text-text-secondary"
+                            className="absolute top-4 right-4 text-text-secondary cursor-pointer hover:text-text-primary transition-colors"
                         >
                             <X size={20} />
                         </button>

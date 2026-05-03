@@ -85,19 +85,63 @@ function TutorCoursesPage() {
   const [expandedCourse, setExpandedCourse] = useState<string | null>(null);
   const [curriculums, setCurriculums] = useState<Record<string, CourseCurriculum>>({});
   const [loadingCurriculums, setLoadingCurriculums] = useState<Record<string, boolean>>({});
+  const [sort, setSort] = useState<"newest" | "oldest">("newest");
+  const [unsortedCourses, setUnsortedCourses] = useState<Course[]>([]);
 
-  const reload = () => {
+  // Sort courses whenever the sort order changes or courses are updated
+  useEffect(() => {
+    const sorted = [...unsortedCourses];
+    sorted.sort((a, b) => {
+      const aDate = new Date(a.published_date ?? a.created_at ?? 0).getTime();
+      const bDate = new Date(b.published_date ?? b.created_at ?? 0).getTime();
+      return sort === "newest" ? bDate - aDate : aDate - bDate;
+    });
+    setCourses(sorted);
+  }, [sort, unsortedCourses]);
+
+  const reload = async () => {
     setLoading(true);
-    contentApi
-      .get("/courses/")
-      .then((res) => {
-        setCourses(normalizeCourses(res.data) as Course[]);
-      })
-      .catch(() => setCourses([]))
-      .finally(() => setLoading(false));
+    try {
+      const res = await contentApi.get("/courses/");
+      const courseList = normalizeCourses(res.data) as Course[];
+      courseList.reverse();  // Show newest items first
+      setUnsortedCourses(courseList);
+
+      // Load curriculums for all courses to get accurate module counts
+      const curriculumPromises = courseList.map(async (course) => {
+        try {
+          const currRes = await contentApi.get(`/courses/${course.id}/curriculum`);
+          const curriculum = unwrapApiData(currRes.data) as CourseCurriculum;
+          return { courseId: course.id, curriculum };
+        } catch (err) {
+          console.warn(`Failed to load curriculum for course ${course.id}:`, err);
+          return null;
+        }
+      });
+
+      const results = await Promise.allSettled(curriculumPromises);
+      const newCurriculums: Record<string, CourseCurriculum> = {};
+      
+      results.forEach((result) => {
+        if (result.status === 'fulfilled' && result.value) {
+          const { courseId, curriculum } = result.value;
+          newCurriculums[courseId] = curriculum;
+        }
+      });
+
+      setCurriculums(newCurriculums);
+    } catch (err) {
+      setCourses([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(reload, []);
+  useEffect(() => {
+    reload().catch((err) => {
+      console.error("Failed to load courses:", err);
+    });
+  }, []);
 
   const submitCreate = async () => {
     setCreating(true);
@@ -155,19 +199,13 @@ function TutorCoursesPage() {
         is_human_required: false,
       });
       
-      // Force reload of curriculum for this course
-      setCurriculums((prev) => {
-        const next = { ...prev };
-        delete next[targetCourseId];
-        return next;
-      });
-      // If this course is expanded, re-fetch its curriculum
-      if (expandedCourse === targetCourseId) {
-        setExpandedCourse(null); // collapse first
-        // Small delay to let state settle then re-expand
-        setTimeout(() => {
-          toggleExpand(targetCourseId);
-        }, 100);
+      // Re-fetch curriculum for this course after adding module
+      try {
+        const currRes = await contentApi.get(`/courses/${targetCourseId}/curriculum`);
+        const curriculum = unwrapApiData(currRes.data) as CourseCurriculum;
+        setCurriculums((prev) => ({ ...prev, [targetCourseId]: curriculum }));
+      } catch (err) {
+        console.warn(`Failed to reload curriculum for course ${targetCourseId}:`, err);
       }
     } catch (err) {
       toast.error(extractErrorMessage(err, "Could not add module"));
@@ -244,12 +282,22 @@ function TutorCoursesPage() {
               Create courses, add modules, and publish content for your learners.
             </p>
           </div>
-          <button
-            onClick={() => setCreateOpen(true)}
-            className="h-11 px-5 bg-primary text-primary-foreground font-medium rounded-md inline-flex items-center gap-2 hover:bg-primary-hover active:scale-[0.97] transition-all shadow-md hover:shadow-lg"
-          >
-            <Plus size={16} /> New course
-          </button>
+          <div className="flex items-center gap-3">
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as "newest" | "oldest")}
+              className="h-11 px-3 border border-border bg-surface-card text-sm"
+            >
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+            </select>
+            <button
+              onClick={() => setCreateOpen(true)}
+              className="h-11 px-5 bg-primary text-primary-foreground font-medium rounded-md inline-flex items-center gap-2 hover:bg-primary-hover active:scale-[0.97] transition-all shadow-md hover:shadow-lg"
+            >
+              <Plus size={16} /> New course
+            </button>
+          </div>
         </div>
 
         {/* Stats bar */}
@@ -589,4 +637,4 @@ function TutorCoursesPage() {
     </div>
   );
 }
-
+

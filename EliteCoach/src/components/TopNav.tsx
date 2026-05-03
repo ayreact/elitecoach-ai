@@ -12,7 +12,7 @@ export function TopNav() {
   const handleLogout = () => {
     logout();
     navigate({ to: "/" });
-  };
+  }; 
 
   const isTutor = user?.userType === "TUTOR";
   const isLearner = user?.userType === "LEARNER" || !user?.userType;

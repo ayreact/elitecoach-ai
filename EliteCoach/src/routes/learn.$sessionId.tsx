@@ -24,6 +24,28 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
+function getEmbeddedVideoUrl(content: string): string | null {
+    const youtubeMatch = content.match(
+        /(https?:\/\/(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11}))(?:[&?][^\s]*)?/i
+    );
+    if (youtubeMatch?.[2]) {
+        return `https://www.youtube.com/embed/${youtubeMatch[2]}`;
+    }
+
+    const vimeoMatch = content.match(
+        /(https?:\/\/vimeo\.com\/(?:channels\/[A-Za-z0-9_-]+\/|ondemand\/[A-Za-z0-9_-]+\/)?(\d+))(?:[&?][^\s]*)?/i
+    );
+    if (vimeoMatch?.[2]) {
+        return `https://player.vimeo.com/video/${vimeoMatch[2]}`;
+    }
+
+    const iframeMatch = content.match(/<iframe[^>]+src="([^"]+)"/i);
+    if (iframeMatch?.[1]) {
+        return iframeMatch[1];
+    }
+    return null;
+}
+
 interface ContentChunk {
     id?: string;
     title: string;
@@ -46,10 +68,12 @@ function LearningRoomPage() {
     const { sessionId } = Route.useParams();
     const navigate = useNavigate();
     const courseId = useSessionStore((s) => s.courseId);
+    const currentSessionId = useSessionStore((s) => s.currentSessionId);
     const storedSubjectId = useSessionStore((s) => s.subjectId);
     const messages = useSessionStore((s) => s.messages);
     const addMessage = useSessionStore((s) => s.addMessage);
     const clearSession = useSessionStore((s) => s.clearSession);
+    const setSession = useSessionStore((s) => s.setSession);
     const user = useAuthStore((s) => s.user);
 
     const [modules, setModules] = useState<Module[]>([]);
@@ -87,12 +111,58 @@ function LearningRoomPage() {
     }, [courseId]);
 
     useEffect(() => {
+        let alive = true;
+        if (!sessionId) return;
+        if (sessionId === currentSessionId && courseId) return;
+
+        aiTutorApi
+            .get("/api/v1/learning/sessions")
+            .then((res) => {
+                if (!alive) return;
+                const data = unwrapApiData<unknown>(res.data);
+                const sessionList = Array.isArray(data)
+                    ? data
+                    : ((data as { sessions?: unknown[] } | null)?.sessions ?? []);
+                const matched = (sessionList as any[]).find((session) => {
+                    const id = String(session.id ?? session.session_id ?? "");
+                    return id === String(sessionId);
+                });
+                if (matched) {
+                    const foundCourseId = String(
+                        matched.course_id ?? (matched as any).courseId ?? ""
+                    );
+                    const foundSubjectId =
+                        coerceIntegerId((matched as any).subject_id ?? matched.subject_id) ??
+                        coerceIntegerId(foundCourseId);
+                    if (foundCourseId) {
+                        setSession({
+                            sessionId: String(sessionId),
+                            courseId: foundCourseId,
+                            subjectId: foundSubjectId,
+                        });
+                    }
+                }
+            })
+            .catch(() => {})
+            .finally(() => {
+                if (!alive) return;
+            });
+        return () => {
+            alive = false;
+        };
+    }, [sessionId, currentSessionId, courseId, setSession]);
+
+    useEffect(() => {
         if (chatRef.current)
             chatRef.current.scrollTop = chatRef.current.scrollHeight;
     }, [messages]);
 
     const currentModule = modules[activeModule];
     const currentLesson = currentModule?.content_chunks?.[activeLesson];
+
+    const embeddedVideoUrl = currentLesson?.content
+        ? getEmbeddedVideoUrl(currentLesson.content)
+        : null;
 
     const totalLessons = modules.reduce(
         (sum, m) => sum + (m.content_chunks?.length ?? 0),
@@ -394,7 +464,7 @@ function LearningRoomPage() {
                 </div>
                 <button
                     onClick={endSession}
-                    className="h-9 px-3 text-sm border border-border hover:bg-surface transition-colors"
+                    className="h-9 px-3 text-sm border border-border hover:bg-surface transition-colors cursor-pointer"
                 >
                     End session
                 </button>
@@ -408,6 +478,20 @@ function LearningRoomPage() {
                         <h1 className="text-3xl font-bold tracking-tight mb-6">
                             {currentLesson.title}
                         </h1>
+                        {embeddedVideoUrl ? (
+                            <div className="mb-6 overflow-hidden rounded-3xl border border-border bg-black/5">
+                                <div className="relative aspect-video w-full">
+                                    <iframe
+                                        src={embeddedVideoUrl}
+                                        title="Course video"
+                                        frameBorder="0"
+                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                        allowFullScreen
+                                        className="absolute inset-0 h-full w-full"
+                                    />
+                                </div>
+                            </div>
+                        ) : null}
                         <div className="prose prose-sm max-w-none text-text-primary leading-relaxed">
                             {currentLesson.content ? (
                                 <ReactMarkdown>
@@ -420,7 +504,7 @@ function LearningRoomPage() {
                                     </div>
                                     <h3 className="text-lg font-semibold text-text-primary mb-2">Start learning with your AI tutor</h3>
                                     <p className="text-text-secondary text-sm max-w-md mx-auto mb-6">
-                                        Ask the AI tutor on the right to explain this topic, quiz you, or walk through examples step by step.
+                                        Ask the AI tutor on the right to explain this topic, quiz you, or break things down step by step.
                                     </p>
                                     <div className="flex flex-wrap gap-2 justify-center">
                                         {["Explain this topic", "Give me an example", "Quiz me on this"].map((suggestion) => (
@@ -446,8 +530,7 @@ function LearningRoomPage() {
                             Welcome to your learning session
                         </h1>
                         <p className="text-text-secondary">
-                            Select a lesson from the left to begin. Your AI
-                            tutor is ready on the right.
+                            Select a lesson from the left to begin. Your AI tutor is ready on the right.
                         </p>
                     </div>
                 )}
@@ -465,13 +548,14 @@ function LearningRoomPage() {
                 >
                     Mark complete
                 </button>
-                <button
-                    onClick={goNext}
-                    className="h-11 px-4 inline-flex items-center gap-2 bg-primary text-primary-foreground text-sm font-medium hover:bg-primary-hover transition-colors"
-                >
-                    Next <ChevronRight size={16} />
-                </button>
-
+                {!isLastLesson && (
+                    <button
+                        onClick={goNext}
+                        className="h-11 px-4 inline-flex items-center gap-2 bg-primary text-primary-foreground text-sm font-medium hover:bg-primary-hover transition-colors"
+                    >
+                        Next <ChevronRight size={16} />
+                    </button>
+                )}
                 {isLastLesson && (
                     <Link
                         to="/quiz/$courseId"

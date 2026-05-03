@@ -76,6 +76,7 @@ function CatalogPage() {
                 const items = unwrapApiList<unknown>(res.data);
                 console.log("Courses API response:", items);
                 let data = normalizeCourses(items) as CourseCardData[];
+                data.reverse();  // Show newest items first
 
                 setCourses(data);
                 setLoading(false);
@@ -104,7 +105,19 @@ function CatalogPage() {
                 const bd = new Date(
                     b.published_date ?? b.created_at ?? 0
                 ).getTime();
-                return bd - ad;
+                return bd - ad;  // Newest first
+            });
+        } else if (sort === "popular") {
+            // TODO: Sort by enrollment count once API provides this data
+            // For now, keep the order as-is or fall back to newest
+            list.sort((a, b) => {
+                const ad = new Date(
+                    a.published_date ?? a.created_at ?? 0
+                ).getTime();
+                const bd = new Date(
+                    b.published_date ?? b.created_at ?? 0
+                ).getTime();
+                return bd - ad;  // Fall back to newest
             });
         }
         return list;

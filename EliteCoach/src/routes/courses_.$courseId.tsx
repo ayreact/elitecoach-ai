@@ -38,6 +38,13 @@ interface Course {
     skill_tags?: string[];
 }
 
+interface SessionRow {
+    id?: string;
+    session_id?: string;
+    course_id?: string | number;
+    status?: string;
+}
+
 interface ContentChunk {
     id?: string;
     title: string;
@@ -75,9 +82,16 @@ function CourseDetailPage() {
 
     const [course, setCourse] = useState<Course | null>(null);
     const [modules, setModules] = useState<Module[]>([]);
+    const [resumeSessionId, setResumeSessionId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [openModule, setOpenModule] = useState<string | null>(null);
     const [starting, setStarting] = useState(false);
+
+    function isEndedSession(status?: string) {
+        const normalized = status?.trim().toLowerCase();
+        if (!normalized) return false;
+        return ["ended", "completed", "finished", "closed", "cancelled", "archived"].includes(normalized);
+    }
 
     useEffect(() => {
         let alive = true;
@@ -164,6 +178,7 @@ function CourseDetailPage() {
                 console.log("Derived course result:", finalCourse);
 
                 setModules(mods as Module[]);
+                setLoading(false);
 
                 if (mods[0]) setOpenModule(String(mods[0].id));
                 setLoading(false);
@@ -178,9 +193,53 @@ function CourseDetailPage() {
         };
     }, [courseId]);
 
+    useEffect(() => {
+        let alive = true;
+        if (!courseId || resumeSessionId) return;
+
+        aiTutorApi
+            .get("/api/v1/learning/sessions")
+            .then((res) => {
+                if (!alive) return;
+                const data = unwrapApiData<unknown>(res.data);
+                const sessionList = Array.isArray(data)
+                    ? data
+                    : ((data as { sessions?: unknown[] } | null)?.sessions ?? []);
+                const matched = (sessionList as SessionRow[]).find((session) => {
+                    const id = String(session.course_id ?? (session as any).courseId ?? "");
+                    return id === String(courseId) && !isEndedSession(session.status);
+                });
+                if (matched) {
+                    const sessionId = matched.session_id ?? matched.id ?? null;
+                    if (sessionId) {
+                        setResumeSessionId(String(sessionId));
+                    }
+                }
+            })
+            .catch(() => {})
+            .finally(() => {
+                if (!alive) return;
+            });
+
+        return () => {
+            alive = false;
+        };
+    }, [courseId, resumeSessionId]);
     const startLearning = async () => {
         setStarting(true);
         try {
+            if (resumeSessionId) {
+                setSession({
+                    sessionId: resumeSessionId,
+                    courseId: String(courseId),
+                    subjectId: coerceIntegerId(courseId) ?? Number(courseId),
+                });
+                navigate({
+                    to: "/learn/$sessionId",
+                    params: { sessionId: resumeSessionId },
+                });
+                return;
+            }
             const numericCourseId = coerceIntegerId(courseId) ?? Number(courseId);
             const subjectId = numericCourseId;
 
@@ -294,7 +353,11 @@ function CourseDetailPage() {
                                     disabled={starting}
                                     className="w-full h-12 bg-primary text-primary-foreground font-semibold rounded-md hover:bg-primary-hover transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                                 >
-                                    {starting ? "Starting..." : "Start learning"}
+                                        {starting
+                                        ? "Starting..."
+                                        : resumeSessionId
+                                        ? "Resume learning"
+                                        : "Start learning"}
                                 </button>
 
                                 <Link
