@@ -1,4 +1,4 @@
-import logoUrl from "@/assets/logo.png";
+import logoUrl from "@/assets/logo-1.png";
 
 export function Logo({
   size = 32,
@@ -11,7 +11,7 @@ export function Logo({
 }) {
   const wordmarkColor = variant === "dark" ? "text-text-primary" : "text-white";
   return (
-    <span className="inline-flex items-center gap-2.5">
+    <span className="inline-flex items-center gap-1">
       <img
         src={logoUrl}
         alt="EliteCoach logo"

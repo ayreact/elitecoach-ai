@@ -21,7 +21,7 @@ export function TopNav() {
     <header className="sticky top-0 z-40 h-16 bg-surface-card border-b border-border">
       <div className="container-1200 flex h-full items-center justify-between">
         <Link to="/" className="flex items-center">
-          <Logo size={32} variant="dark" />
+          <Logo size={28} variant="dark" />
         </Link>
 
         <nav className="hidden md:flex items-center gap-8">
