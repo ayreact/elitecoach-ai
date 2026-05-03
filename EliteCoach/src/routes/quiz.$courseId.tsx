@@ -1,0 +1,732 @@
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { requireLearner } from "@/lib/auth-guard";
+import { useEffect, useState } from "react";
+import {
+    acsApi,
+    assessmentsApi,
+    buildNotificationPayload,
+    coerceIntegerId,
+    contentApi,
+    extractErrorMessage,
+    normalizeCourse,
+    notificationsApi,
+    unwrapApiData,
+} from "@/lib/api-client";
+import { TopNav } from "@/components/TopNav";
+import { useAuthStore } from "@/lib/stores";
+import { toast } from "sonner";
+import { Check, X } from "lucide-react";
+
+interface Question {
+    id: string;
+    question: string;
+    options: string[];
+    correct_answer?: string;
+}
+
+function parseQuestions(payload: unknown): Question[] {
+    const data = unwrapApiData<unknown>(payload);
+    const parsed =
+        typeof data === "string"
+            ? (() => {
+                  try {
+                      return JSON.parse(data) as unknown;
+                  } catch {
+                      return null;
+                  }
+              })()
+            : data;
+
+    const candidates = Array.isArray(parsed)
+        ? parsed
+        : ((parsed as { questions?: unknown[]; items?: unknown[] } | null)
+              ?.questions ??
+          (parsed as { questions?: unknown[]; items?: unknown[] } | null)
+              ?.items ??
+          []);
+
+    return candidates
+        .map<Question | null>((item, index) => {
+            if (!item || typeof item !== "object") return null;
+            const value = item as Record<string, unknown>;
+            const prompt =
+                typeof value.question === "string"
+                    ? value.question
+                    : typeof value.prompt === "string"
+                      ? value.prompt
+                      : "";
+            const options = Array.isArray(value.options)
+                ? value.options.filter(
+                      (option): option is string => typeof option === "string"
+                  )
+                : [];
+
+            if (!prompt) return null;
+
+            return {
+                id:
+                    value.id != null
+                        ? String(value.id)
+                        : value.question_id != null
+                          ? String(value.question_id)
+                          : `generated-${index + 1}`,
+                question: prompt,
+                options,
+                correct_answer:
+                    typeof value.correct_answer === "string"
+                        ? value.correct_answer
+                        : undefined,
+            };
+        })
+        .filter((question): question is Question => question !== null);
+}
+
+export const Route = createFileRoute("/quiz/$courseId")({
+    beforeLoad: () => { requireLearner(); },
+    head: () => ({ meta: [{ title: "Quiz — EliteCoach" }] }),
+    validateSearch: (search: Record<string, unknown>) => ({
+        level: (search.level as string) ?? "beginner",
+        count: typeof search.count === "number" ? search.count : 5,
+    }),
+    component: QuizPage,
+});
+
+function QuizPage() {
+    const { courseId } = Route.useParams();
+    const { level: searchLevel, count: searchCount } = Route.useSearch();
+    const navigate = useNavigate();
+    const user = useAuthStore((s) => s.user);
+    const [questions, setQuestions] = useState<Question[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [idx, setIdx] = useState(0);
+    const [answers, setAnswers] = useState<Record<string, string>>({});
+    const [submitting, setSubmitting] = useState(false);
+    const [result, setResult] = useState<{
+        score: number;
+        total: number;
+        passed?: boolean;
+        perQuestion?: { id: string; correct: boolean }[];
+    } | null>(null);
+    const [showConfig, setShowConfig] = useState(true);
+    const [configLevel, setConfigLevel] = useState(searchLevel || "beginner");
+    const [configCount, setConfigCount] = useState(searchCount || 5);
+    const [generatingCert, setGeneratingCert] = useState(false);
+    const [certificate, setCertificate] = useState<{
+        id: string;
+        verification_code: string;
+        pdf_url: string;
+        linkedin_share_url?: string;
+    } | null>(null);
+
+    useEffect(() => {
+        let alive = true;
+        const numericCourseId = coerceIntegerId(courseId);
+
+        if (numericCourseId == null) {
+            setQuestions([
+                {
+                    id: "demo-1",
+                    question: "What's the primary benefit of an AI tutor?",
+                    options: [
+                        "It replaces all human teachers",
+                        "It adapts explanations to your pace",
+                        "It only works for math",
+                        "It removes the need to study",
+                    ],
+                    correct_answer: "It adapts explanations to your pace",
+                },
+            ]);
+            setLoading(false);
+            return () => {
+                alive = false;
+            };
+        }
+
+        // Fetch curriculum to get course title
+        contentApi
+            .get(`/courses/${numericCourseId}/curriculum`)
+            .then((curriculumRes) => {
+                if (!alive) return;
+                const curriculumData = curriculumRes.data
+                    ? unwrapApiData<any>(curriculumRes.data)
+                    : null;
+                const matchedCourse = curriculumData
+                    ? normalizeCourse(curriculumData)
+                    : null;
+
+                // Use the course title as the topic for quiz generation
+                const topic = matchedCourse?.title ?? "Course assessment";
+
+                // Generate quiz with the correct topic, level, and question count
+                return assessmentsApi.post(
+                    "/api/v1/assessments/generate-quiz",
+                    null,
+                    {
+                        params: {
+                            course_id: numericCourseId,
+                            topic: topic,
+                            num_questions: configCount,
+                            level: configLevel,
+                        },
+                    }
+                );
+            })
+            .then((quizRes) => {
+                if (!alive || !quizRes) return;
+                const data = parseQuestions(quizRes.data);
+                if (data.length === 0) {
+                    // Fallback demo question
+                    setQuestions([
+                        {
+                            id: "demo-1",
+                            question:
+                                "What's the primary benefit of an AI tutor?",
+                            options: [
+                                "It replaces all human teachers",
+                                "It adapts explanations to your pace",
+                                "It only works for math",
+                                "It removes the need to study",
+                            ],
+                            correct_answer:
+                                "It adapts explanations to your pace",
+                        },
+                    ]);
+                } else {
+                    setQuestions(data);
+                }
+            })
+            .catch((err) => {
+                if (!alive) return;
+                console.error("Error fetching quiz data:", err);
+                setQuestions([
+                    {
+                        id: "demo-1",
+                        question: "What's the primary benefit of an AI tutor?",
+                        options: [
+                            "It replaces all human teachers",
+                            "It adapts explanations to your pace",
+                            "It only works for math",
+                            "It removes the need to study",
+                        ],
+                        correct_answer: "It adapts explanations to your pace",
+                    },
+                ]);
+            })
+            .finally(() => {
+                if (alive) setLoading(false);
+            });
+        return () => {
+            alive = false;
+        };
+    }, [courseId, configLevel, configCount]);
+
+    const current = questions[idx];
+    const progress =
+        questions.length === 0
+            ? 0
+            : Math.round(((idx + 1) / questions.length) * 100);
+
+    const submit = async () => {
+        setSubmitting(true);
+        try {
+            const numericCourseId = coerceIntegerId(courseId);
+            if (numericCourseId == null) {
+                throw new Error("This quiz requires a numeric course ID.");
+            }
+
+            // Use Service D (ACS) inline quiz submit endpoint
+            const res = await acsApi.post("/v1/assessment/quiz/submit-inline", {
+                user_id: user?.id || user?.email || "unknown",
+                course_id: numericCourseId,
+                skill_domain: "General",
+                questions: questions.map((q) => ({
+                    id: q.id,
+                    correct_answer: q.correct_answer || "",
+                })),
+                submitted_answers: answers,
+                max_score: 100,
+                pass_score: 70,
+                tutor_assessment_id: numericCourseId,
+            });
+            const payload = unwrapApiData<unknown>(res.data);
+            const result = typeof payload === "object" ? payload : {};
+            const score = Number((result as any).score ?? 0);
+            const passed = Boolean((result as any).passed ?? score >= 70);
+
+            // Calculate per-question results based on submitted answers vs correct answers
+            const per: { id: string; correct: boolean }[] = questions.map(
+                (q) => ({
+                    id: q.id,
+                    correct: answers[q.id] === q.correct_answer,
+                })
+            );
+
+            setResult({
+                score,
+                total: questions.length,
+                passed,
+                perQuestion: per,
+            });
+            notificationsApi
+                .post(
+                    "/api/v1/notification/send",
+                    buildNotificationPayload({
+                        to: user?.email,
+                        subject: "Quiz complete",
+                        body: `You scored ${typeof score === "number" ? score : 0}%`,
+                    })
+                )
+                .catch(() => {});
+        } catch (err) {
+            // local scoring fallback
+            const correct = questions.filter(
+                (q) => answers[q.id] === q.correct_answer
+            ).length;
+            const score = Math.round((correct / questions.length) * 100);
+            setResult({
+                score,
+                total: questions.length,
+                passed: score >= 70,
+                perQuestion: questions.map((q) => ({
+                    id: q.id,
+                    correct: answers[q.id] === q.correct_answer,
+                })),
+            });
+            toast.error(
+                extractErrorMessage(err, "Could not submit, scored locally")
+            );
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const generateCertificate = async () => {
+        if (!user?.id && !user?.email) {
+            toast.error("User ID not found");
+            return;
+        }
+        if (!result?.passed) {
+            toast.error("You must pass the quiz to generate a certificate");
+            return;
+        }
+
+        setGeneratingCert(true);
+        try {
+            const numericCourseId = coerceIntegerId(courseId);
+            if (numericCourseId == null) {
+                throw new Error("Invalid course ID");
+            }
+
+            const userId = user.id || user.email || "unknown";
+            console.log(
+                "Generating certificate for user:",
+                userId,
+                "course:",
+                numericCourseId
+            );
+
+            const res = await acsApi.get(
+                `/v1/assessment/certificates/${userId}`,
+                {
+                    params: {
+                        course_id: numericCourseId,
+                    },
+                }
+            );
+
+            console.log("Certificate response:", res.data);
+            const certData = unwrapApiData<any>(res.data);
+            setCertificate({
+                id: certData.id,
+                verification_code: certData.verification_code,
+                pdf_url: certData.pdf_url,
+                linkedin_share_url: certData.linkedin_share_url,
+            });
+
+            toast.success("Certificate generated successfully!");
+
+            // Optionally open PDF in new window
+            if (certData.pdf_url) {
+                window.open(certData.pdf_url, "_blank");
+            }
+        } catch (err: any) {
+            console.error("Certificate generation error:", err);
+
+            // More detailed error logging
+            if (err.response?.status === 502) {
+                toast.error(
+                    "Certificate service is temporarily unavailable. Please try again in a moment."
+                );
+            } else if (err.response?.status === 401) {
+                toast.error("Your session has expired. Please log in again.");
+            } else if (err.response?.status === 400) {
+                toast.error(
+                    "Invalid request. Please ensure the course is valid."
+                );
+            } else {
+                toast.error(
+                    extractErrorMessage(err, "Could not generate certificate")
+                );
+            }
+        } finally {
+            setGeneratingCert(false);
+        }
+    };
+
+    if (loading) {
+        return (
+            <div className="min-h-screen bg-surface">
+                <TopNav />
+                <div className="container-1200 py-20">
+                    <div className="h-64 bg-surface-card animate-pulse" />
+                </div>
+            </div>
+        );
+    }
+
+    if (result) {
+        const ringPct = Math.min(100, Math.max(0, result.score));
+        return (
+            <div className="min-h-screen bg-surface">
+                <TopNav />
+                <div className="container-1200 py-16 max-w-2xl">
+                    <div className="card-base text-center py-12">
+                        <div className="relative w-40 h-40 mx-auto mb-6">
+                            <svg
+                                viewBox="0 0 100 100"
+                                className="w-full h-full -rotate-90"
+                            >
+                                <circle
+                                    cx="50"
+                                    cy="50"
+                                    r="44"
+                                    stroke="var(--border)"
+                                    strokeWidth="8"
+                                    fill="none"
+                                />
+                                <circle
+                                    cx="50"
+                                    cy="50"
+                                    r="44"
+                                    stroke="var(--coral)"
+                                    strokeWidth="8"
+                                    fill="none"
+                                    strokeDasharray={`${(ringPct / 100) * 276.46} 276.46`}
+                                    strokeLinecap="round"
+                                />
+                            </svg>
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <span className="text-4xl font-bold">
+                                    {ringPct}%
+                                </span>
+                            </div>
+                        </div>
+                        <span
+                            className={`label-caps inline-block px-3 py-1 rounded-sm ${
+                                result.passed
+                                    ? "bg-success/10 text-success"
+                                    : "bg-destructive/10 text-destructive"
+                            }`}
+                        >
+                            {result.passed ? "Passed" : "Did not pass"}
+                        </span>
+                        <h1 className="text-3xl font-bold mt-4 mb-2">
+                            Quiz complete
+                        </h1>
+                        <p className="text-text-secondary">
+                            You answered {questions.length} question
+                            {questions.length === 1 ? "" : "s"}.
+                        </p>
+                    </div>
+
+                    <div className="card-base mt-6">
+                        <h3 className="font-semibold mb-4">
+                            Per-question breakdown
+                        </h3>
+                        <div className="divide-y divide-border">
+                            {(result.perQuestion ?? []).map((p, i) => {
+                                const q = questions.find(
+                                    (qq) => qq.id === p.id
+                                );
+                                return (
+                                    <div
+                                        key={p.id}
+                                        className="py-3 flex items-start gap-3"
+                                    >
+                                        <span
+                                            className={`w-6 h-6 flex items-center justify-center shrink-0 ${
+                                                p.correct
+                                                    ? "bg-success text-white"
+                                                    : "bg-destructive text-white"
+                                            }`}
+                                        >
+                                            {p.correct ? (
+                                                <Check size={14} />
+                                            ) : (
+                                                <X size={14} />
+                                            )}
+                                        </span>
+                                        <div className="text-sm">
+                                            <div className="font-medium">
+                                                Q{i + 1}.{" "}
+                                                {q?.question ?? "Question"}
+                                            </div>
+                                            <div className="text-text-secondary text-xs mt-1">
+                                                Your answer:{" "}
+                                                {answers[p.id] ?? "—"}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {certificate && (
+                        <div className="bg-success/10 border border-success/30 rounded-lg p-6 mt-8">
+                            <h3 className="font-semibold text-success mb-3">
+                                Certificate Generated!
+                            </h3>
+                            <p className="text-sm text-text-secondary mb-4">
+                                Verification Code:{" "}
+                                <code className="font-mono text-xs bg-surface-card px-2 py-1 rounded">
+                                    {certificate.verification_code}
+                                </code>
+                            </p>
+                            <div className="flex gap-2">
+                                {certificate.pdf_url && (
+                                    <a
+                                        href={certificate.pdf_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex-1 h-10 inline-flex items-center justify-center bg-success text-white font-medium rounded hover:opacity-90 transition-opacity text-sm"
+                                    >
+                                        Download PDF
+                                    </a>
+                                )}
+                                {certificate.linkedin_share_url && (
+                                    <a
+                                        href={certificate.linkedin_share_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex-1 h-10 inline-flex items-center justify-center bg-blue-600 text-white font-medium rounded hover:opacity-90 transition-opacity text-sm"
+                                    >
+                                        Share on LinkedIn
+                                    </a>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className={`flex gap-3 mt-${certificate ? 4 : 8}`}>
+                        {result.passed && !certificate && (
+                            <button
+                                onClick={generateCertificate}
+                                disabled={generatingCert}
+                                className="flex-1 h-12 bg-success text-white font-medium rounded hover:opacity-90 transition-opacity disabled:opacity-50"
+                            >
+                                {generatingCert
+                                    ? "Generating..."
+                                    : "Generate Certificate"}
+                            </button>
+                        )}
+                        <Link
+                            to="/dashboard"
+                            className="flex-1 h-12 inline-flex items-center justify-center bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors"
+                        >
+                            Back to dashboard
+                        </Link>
+                        <button
+                            onClick={() => {
+                                setResult(null);
+                                setAnswers({});
+                                setIdx(0);
+                                setCertificate(null);
+                            }}
+                            className="flex-1 h-12 border border-border font-medium hover:bg-surface transition-colors"
+                        >
+                            Retake quiz
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (!current) {
+        return (
+            <div className="min-h-screen bg-surface">
+                <TopNav />
+                <div className="container-1200 py-20 text-center">
+                    <p className="text-text-secondary">
+                        No quiz available for this course yet.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    const selected = answers[current.id];
+    const isLast = idx === questions.length - 1;
+
+    return (
+        <div className="min-h-screen bg-surface">
+            <TopNav />
+            <div className="container-1200 py-12 max-w-2xl">
+                <div className="mb-10">
+                    <div className="flex items-center justify-between text-sm mb-3">
+                        <span className="label-caps text-text-secondary">
+                            Question {idx + 1} of {questions.length}
+                        </span>
+                        <span className="font-mono text-text-secondary">
+                            {progress}%
+                        </span>
+                    </div>
+                    <div className="h-1 w-full bg-border rounded-sm overflow-hidden">
+                        <div
+                            className="h-full bg-coral transition-all"
+                            style={{ width: `${progress}%` }}
+                        />
+                    </div>
+                </div>
+
+                <h1 className="text-3xl font-bold tracking-tight leading-tight mb-8">
+                    {current.question}
+                </h1>
+
+                <div className="space-y-3 mb-10">
+                    {current.options.map((opt) => {
+                        const isSel = selected === opt;
+                        return (
+                            <button
+                                key={opt}
+                                onClick={() =>
+                                    setAnswers((a) => ({
+                                        ...a,
+                                        [current.id]: opt,
+                                    }))
+                                }
+                                className={`w-full text-left p-5 border-2 transition-colors ${
+                                    isSel
+                                        ? "border-primary bg-primary/5"
+                                        : "border-border bg-surface-card hover:border-primary/40"
+                                }`}
+                            >
+                                <span className="font-medium">{opt}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+
+                <div className="flex justify-between gap-3">
+                    <button
+                        onClick={() => setIdx((i) => Math.max(0, i - 1))}
+                        disabled={idx === 0}
+                        className="h-12 px-5 border border-border font-medium hover:bg-surface transition-colors disabled:opacity-50"
+                    >
+                        ← Previous
+                    </button>
+                    {isLast ? (
+                        <button
+                            onClick={submit}
+                            disabled={!selected || submitting}
+                            className="h-12 px-6 bg-coral text-coral-foreground font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+                        >
+                            {submitting ? "Submitting..." : "Submit quiz"}
+                        </button>
+                    ) : (
+                        <button
+                            onClick={() => setIdx((i) => i + 1)}
+                            disabled={!selected}
+                            className="h-12 px-6 bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors disabled:opacity-50"
+                        >
+                            Next →
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* Config Modal Overlay */}
+            {showConfig && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <div
+                        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                        onClick={() => navigate({ to: "/courses" })}
+                    />
+                    <div className="relative bg-white rounded-lg shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+                        <div className="bg-coral p-6 text-white text-center">
+                            <h3 className="text-xl font-bold mb-1">
+                                Assessment Settings
+                            </h3>
+                            <p className="text-white/80 text-sm">
+                                Configure your quiz
+                            </p>
+                        </div>
+                        <div className="p-8 space-y-6">
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                    Difficulty Level
+                                </label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {[
+                                        "beginner",
+                                        "intermediate",
+                                        "advanced",
+                                    ].map((lvl) => (
+                                        <button
+                                            key={lvl}
+                                            onClick={() => setConfigLevel(lvl)}
+                                            className={`py-2 px-1 text-xs font-bold rounded border-2 transition-all capitalize ${
+                                                configLevel === lvl
+                                                    ? "border-blue-600 bg-blue-50 text-blue-700"
+                                                    : "border-slate-100 hover:border-slate-300 text-slate-500"
+                                            }`}
+                                        >
+                                            {lvl}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                    Number of Questions
+                                </label>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {[5, 10, 15, 20].map((num) => (
+                                        <button
+                                            key={num}
+                                            onClick={() => setConfigCount(num)}
+                                            className={`py-2 rounded border-2 font-bold text-sm transition-all ${
+                                                configCount === num
+                                                    ? "border-blue-600 bg-blue-50 text-blue-700"
+                                                    : "border-slate-100 hover:border-slate-300 text-slate-500"
+                                            }`}
+                                        >
+                                            {num}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="pt-4 flex gap-3">
+                                <button
+                                    onClick={() => navigate({ to: "/courses" })}
+                                    className="flex-1 py-3 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={() => setShowConfig(false)}
+                                    className="flex-[2] py-3 bg-blue-600 text-white font-bold text-sm rounded flex items-center justify-center shadow-lg hover:bg-blue-700 transition-all"
+                                >
+                                    Start Assessment
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}

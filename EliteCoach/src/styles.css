@@ -1,0 +1,333 @@
+@import "tailwindcss" source(none);
+@import "tw-animate-css";
+
+@source "../src";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * EliteCoach design system — IBM Carbon-inspired
+ * Square corners, tight borders, editorial spacing, navy + IBM blue + coral.
+ */
+
+@theme inline {
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-coral: var(--coral);
+  --color-coral-foreground: var(--coral-foreground);
+  --color-navy: var(--navy);
+  --color-navy-foreground: var(--navy-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-surface: var(--surface);
+  --color-surface-card: var(--surface-card);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+}
+
+:root {
+  --radius: 4px;
+
+  /* IBM Carbon palette translated to oklch */
+  --background: oklch(0.961 0 0); /* #F4F4F4 surface */
+  --foreground: oklch(0.165 0 0); /* #161616 */
+  --surface: oklch(0.961 0 0);
+  --surface-card: oklch(1 0 0);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.165 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.165 0 0);
+
+  --primary: oklch(0.534 0.219 264.05); /* #0F62FE IBM Blue */
+  --primary-foreground: oklch(1 0 0);
+  --primary-hover: oklch(0.475 0.226 264.5); /* #0353E9 */
+
+  --secondary: oklch(0.961 0 0);
+  --secondary-foreground: oklch(0.165 0 0);
+
+  --muted: oklch(0.961 0 0);
+  --muted-foreground: oklch(0.493 0 0); /* #6F6F6F */
+
+  --accent: oklch(0.96 0.018 250);
+  --accent-foreground: oklch(0.534 0.219 264.05);
+
+  --coral: oklch(0.71 0.176 41); /* #FF6B35 */
+  --coral-foreground: oklch(1 0 0);
+
+  --navy: oklch(0.21 0.105 269); /* #001141 */
+  --navy-foreground: oklch(1 0 0);
+
+  --destructive: oklch(0.55 0.222 27); /* #DA1E28 */
+  --destructive-foreground: oklch(1 0 0);
+  --success: oklch(0.585 0.156 144); /* #24A148 */
+  --warning: oklch(0.83 0.155 90); /* #F1C21B */
+
+  --border: oklch(0.886 0 0); /* #E0E0E0 */
+  --input: oklch(0.886 0 0);
+  --ring: oklch(0.534 0.219 264.05);
+
+  --text-primary: oklch(0.165 0 0);
+  --text-secondary: oklch(0.493 0 0);
+
+  --sidebar: oklch(0.21 0.105 269);
+  --sidebar-foreground: oklch(1 0 0);
+  --sidebar-primary: oklch(0.534 0.219 264.05);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.27 0.09 268);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-border: oklch(0.27 0.09 268);
+  --sidebar-ring: oklch(0.534 0.219 264.05);
+
+  --chart-1: oklch(0.534 0.219 264.05);
+  --chart-2: oklch(0.71 0.176 41);
+  --chart-3: oklch(0.585 0.156 144);
+  --chart-4: oklch(0.83 0.155 90);
+  --chart-5: oklch(0.21 0.105 269);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-sans);
+    letter-spacing: -0.01em;
+  }
+
+  code,
+  pre,
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer utilities {
+  @keyframes card-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(14px) scale(0.985);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes hero-float-a {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0) rotate(2deg);
+    }
+
+    50% {
+      transform: translate3d(-8px, -12px, 0) rotate(3.5deg);
+    }
+  }
+
+  @keyframes hero-float-b {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0) rotate(-2deg);
+    }
+
+    50% {
+      transform: translate3d(10px, -10px, 0) rotate(-3.5deg);
+    }
+  }
+
+  .label-caps {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+
+  .container-1200 {
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+
+  .section-y {
+    padding-top: 80px;
+    padding-bottom: 80px;
+  }
+
+  .card-base {
+    position: relative;
+    background-color: var(--surface-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    overflow: hidden;
+    transition:
+      box-shadow 0.22s ease,
+      transform 0.22s ease,
+      border-color 0.22s ease,
+      background-color 0.22s ease;
+  }
+
+  .card-base.card-interactive::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 -140%;
+    width: 55%;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in oklab, var(--color-primary) 12%, transparent) 50%,
+      transparent 100%
+    );
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      transform 0.5s ease,
+      opacity 0.22s ease;
+  }
+
+  .card-base.card-interactive:hover,
+  .card-base.card-interactive:focus-within {
+    border-color: color-mix(in oklab, var(--color-primary) 28%, var(--border));
+    box-shadow:
+      0 18px 40px rgba(0, 17, 65, 0.08),
+      0 6px 16px rgba(0, 0, 0, 0.06);
+    transform: translateY(-4px) scale(1.01);
+  }
+
+  .card-base.card-interactive:hover::after,
+  .card-base.card-interactive:focus-within::after {
+    opacity: 1;
+    transform: translateX(240%);
+  }
+
+  .reveal-card {
+    opacity: 0;
+    animation: card-reveal 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  .hero-float {
+    will-change: transform;
+    transform-origin: center;
+  }
+
+  .hero-float-a {
+    animation: hero-float-a 5.8s ease-in-out infinite;
+  }
+
+  .hero-float-b {
+    animation: hero-float-b 6.6s ease-in-out infinite;
+  }
+
+  .toast-elite {
+    background-color: var(--navy);
+    color: var(--navy-foreground);
+    border-left: 3px solid var(--coral);
+    border-radius: 4px;
+    padding: 16px 20px;
+    width: 320px;
+  }
+
+  /* ── Tutor CMS animations ── */
+  @keyframes slide-in-right {
+    from { transform: translateX(100%); opacity: 0; }
+    to   { transform: translateX(0);    opacity: 1; }
+  }
+
+  @keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0);   }
+  }
+
+  @keyframes expand-down {
+    from { opacity: 0; max-height: 0; }
+    to   { opacity: 1; max-height: 1200px; }
+  }
+
+  @keyframes overlay-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  @keyframes shimmer {
+    0%   { background-position: -200% 0; }
+    100% { background-position: 200% 0;  }
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: .4; transform: scale(0.95); }
+    50%      { opacity: 1;  transform: scale(1.05); }
+  }
+
+  .animate-slide-in-right {
+    animation: slide-in-right 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .animate-expand-down {
+    animation: expand-down 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+    overflow: hidden;
+  }
+
+  .animate-overlay-in {
+    animation: overlay-in 0.2s ease both;
+  }
+
+  .skeleton-shimmer {
+    background: linear-gradient(90deg, var(--surface) 25%, var(--border) 50%, var(--surface) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+    border-radius: 4px;
+  }
+}
