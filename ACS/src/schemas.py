@@ -61,6 +61,8 @@ class CertificateResponse(BaseModel):
     id: str
     user_id: str
     course_id: int
+    course_name: Optional[str] = None
+    owner_name: Optional[str] = None
     issued_at: datetime
     verification_code: str
     pdf_url: str
@@ -74,10 +76,12 @@ class CertificateResponse(BaseModel):
 class PublicCertificateResponse(BaseModel):
     """
     Safe public view of a certificate — returned by the no-auth verify endpoint.
-    Does NOT include user_id or any PII beyond course and issue date.
+    Does NOT include user_id but includes names for verification.
     """
     verification_code: str
     course_id: int
+    course_name: Optional[str] = None
+    owner_name: Optional[str] = None
     issued_at: datetime
     pdf_url: str
     co_brand_org_id: Optional[str] = None

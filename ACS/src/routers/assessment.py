@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 PLATFORM_BASE_URL = os.getenv("PLATFORM_BASE_URL", "http://localhost:8000")
 ENGAGEMENT_SERVICE_URL = os.getenv("ENGAGEMENT_SERVICE_URL", "")
+# Service C (CCMS) URL for fetching course details
+CCMS_SERVICE_URL = os.getenv("CONTENT_SERVICE_URL", os.getenv("TUTOR_SERVICE_URL", "http://localhost:8001"))
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +54,34 @@ def _build_linkedin_share_url(verification_code: str) -> str:
 def _enrich_cert(cert: Certificate) -> CertificateResponse:
     response = CertificateResponse.model_validate(cert)
     response.linkedin_share_url = _build_linkedin_share_url(cert.verification_code)
+    # Ensure course_name and owner_name are present if they were added later
+    response.course_name = cert.course_name
+    response.owner_name = cert.owner_name
     return response
+
+
+async def _fetch_course_name(course_id: int, auth_token: str | None = None) -> str:
+    """Fetches the course title from the Content & Curriculum Service (Service C)."""
+    if not CCMS_SERVICE_URL:
+        return f"Course {course_id}"
+
+    endpoint = f"{CCMS_SERVICE_URL.rstrip('/')}/courses/{course_id}/curriculum"
+    try:
+        headers = {}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(endpoint, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("title") or f"Course {course_id}"
+            else:
+                logger.warning(f"CCMS returned {response.status_code} for course {course_id}")
+    except Exception as e:
+        logger.error(f"Failed to fetch course name from CCMS: {e}")
+    
+    return f"Course {course_id}"
 
 
 def _get_or_create_profile(db: Session, user_id: str) -> LearnerProfile:
@@ -329,6 +358,8 @@ async def verify_certificate(code: str, db: Session = Depends(get_db)):
     return PublicCertificateResponse(
         verification_code=cert.verification_code,
         course_id=cert.course_id,
+        course_name=cert.course_name or f"Course {cert.course_id}",
+        owner_name=cert.owner_name or "Elite Coach Learner",
         issued_at=cert.issued_at,
         pdf_url=cert.pdf_url,
         co_brand_org_id=cert.co_brand_org_id,
@@ -371,16 +402,22 @@ async def get_certificate(
     if not cert:
         verification_code = f"EC-{uuid.uuid4().hex[:8].upper()}"
         user_name = user.get("name") or user.get("full_name") or f"Learner {auth_user_id[:6]}"
+        
+        # Fetch the real course name from CCMS (Service C)
+        course_name = await _fetch_course_name(course_id, user.get("token"))
+        
         issued_date = datetime.now()
         pdf_url = generate_certificate_pdf(
             user_name=user_name,
-            course_name=f"Course {course_id}",
+            course_name=course_name,
             verification_code=verification_code,
             issue_date=issued_date,
         )
         cert = Certificate(
             user_id=auth_user_id,
             course_id=course_id,
+            course_name=course_name,
+            owner_name=user_name,
             verification_code=verification_code,
             pdf_url=pdf_url,
             issued_at=issued_date,

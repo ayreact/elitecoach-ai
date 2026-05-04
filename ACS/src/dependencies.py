@@ -55,6 +55,7 @@ async def validate_user(credentials: HTTPAuthorizationCredentials = Depends(secu
                 # Map other fields
                 user_data["email"] = raw_data.get("email")
                 user_data["name"] = f"{raw_data.get('firstName', '')} {raw_data.get('lastName', '')}".strip()
+                user_data["token"] = token # Store the token for reuse
                 
                 return user_data
             elif response.status_code in (401, 403):

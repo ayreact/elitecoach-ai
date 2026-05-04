@@ -29,6 +29,8 @@ class Certificate(Base):
     id = Column(String, primary_key=True, default=generate_uuid, index=True)
     user_id = Column(String, index=True, nullable=False)
     course_id = Column(Integer, index=True, nullable=False)
+    course_name = Column(String, nullable=True)
+    owner_name = Column(String, nullable=True)
     issued_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     verification_code = Column(String, unique=True, index=True, nullable=False)
     pdf_url = Column(String, nullable=False)

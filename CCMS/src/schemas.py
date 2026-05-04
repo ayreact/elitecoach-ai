@@ -26,6 +26,8 @@ class CourseBase(BaseModel):
     difficulty_level: str
     skill_tags: List[str] = []
     tutor_id: str
+    tutor_name: Optional[str] = None
+
 
 class CourseCreate(CourseBase):
     pass
@@ -33,6 +35,8 @@ class CourseCreate(CourseBase):
 class CourseResponse(CourseBase):
     id: int
     published_at: Optional[datetime] = None
+    tutor_name: Optional[str] = None
+
 
     class Config:
         from_attributes = True

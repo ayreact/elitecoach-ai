@@ -12,6 +12,8 @@ class Course(Base):
     difficulty_level = Column(String)
     skill_tags = Column(JSON) # Storing array of strings as JSON
     tutor_id = Column(String, index=True)
+    tutor_name = Column(String, nullable=True)
+
     published_at = Column(DateTime, nullable=True)
 
     modules = relationship("Module", back_populates="course", cascade="all, delete-orphan")

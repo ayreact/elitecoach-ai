@@ -48,3 +48,31 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not reach the Identity Service. Please ensure it is running."
         )
+
+async def get_user_name_by_id(user_id: str, token: Optional[str] = None) -> Optional[str]:
+    """
+    Fetches the full name of a user from the Identity Service by their ID.
+    """
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+        
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{IDENTITY_SERVICE_URL}/api/v1/users/{user_id}",
+                headers=headers,
+                timeout=3.0
+            )
+
+            
+            if response.status_code == 200:
+                data = response.json()
+                first_name = data.get("firstName", "")
+                last_name = data.get("lastName", "")
+                if first_name or last_name:
+                    return f"{first_name} {last_name}".strip()
+                return data.get("name") or data.get("username")
+            return None
+    except Exception:
+        return None

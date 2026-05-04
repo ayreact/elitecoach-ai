@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials
+
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
@@ -6,7 +8,9 @@ import os
 
 from .. import models, schemas
 from ..database import get_db
-from ..dependencies import get_current_user
+from ..dependencies import get_current_user, get_user_name_by_id, security
+
+
 
 # Environment setup for Pinecone and OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API")
@@ -19,11 +23,12 @@ router = APIRouter(
 )
 
 @router.get("/", response_model=List[schemas.CourseResponse])
-def get_courses(
+async def get_courses(
     domain: Optional[str] = None,
     difficulty_level: Optional[str] = None,
     db: Session = Depends(get_db), 
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    token: HTTPAuthorizationCredentials = Depends(security)
 ):
     """
     Lists available courses based on user eligibility and content filters.
@@ -35,7 +40,31 @@ def get_courses(
         query = query.filter(models.Course.difficulty_level.ilike(difficulty_level))
     
     courses = query.all()
+    
+    # Enrich courses with tutor names and replace tutor_id with name in response
+    unique_tutor_ids = {c.tutor_id for c in courses if not c.tutor_name and c.tutor_id}
+    name_cache = {}
+    
+    for t_id in unique_tutor_ids:
+        # Pass the current user's token to authorized lookup
+        name = await get_user_name_by_id(t_id, token=token.credentials)
+        if name:
+            name_cache[t_id] = name
+            
+    for c in courses:
+        # If we have it in cache, use it
+        if not c.tutor_name and c.tutor_id in name_cache:
+            c.tutor_name = name_cache[c.tutor_id]
+        
+        # Override tutor_id with tutor_name for the response as requested
+        if c.tutor_name:
+            c.tutor_id = c.tutor_name
+        elif c.tutor_id and not c.tutor_id.startswith("Tutor "):
+            # Fallback if name is still missing for old IDs
+            c.tutor_id = f"Tutor {c.tutor_id[:8]}"
+            
     return courses
+
 
 @router.post("/", response_model=schemas.CourseResponse, status_code=status.HTTP_201_CREATED)
 def create_course(course: schemas.CourseCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -46,20 +75,46 @@ def create_course(course: schemas.CourseCreate, db: Session = Depends(get_db), c
         raise HTTPException(status_code=403, detail="Not authorized to create courses")
     
     db_course = models.Course(**course.model_dump())
+    
+    # Get tutor name from current_user if available
+    first_name = current_user.get("firstName", "")
+    last_name = current_user.get("lastName", "")
+    if first_name or last_name:
+        db_course.tutor_name = f"{first_name} {last_name}".strip()
+    elif "name" in current_user:
+        db_course.tutor_name = current_user["name"]
+        
     db.add(db_course)
     db.commit()
     db.refresh(db_course)
+    
+    # Override tutor_id with name for the response
+    if db_course.tutor_name:
+        db_course.tutor_id = db_course.tutor_name
+        
     return db_course
 
+
 @router.get("/{course_id}/curriculum", response_model=schemas.CourseCurriculumResponse)
-def get_course_curriculum(course_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def get_course_curriculum(course_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user), token: HTTPAuthorizationCredentials = Depends(security)):
     """
     Returns the full structure (modules/lessons) of a course.
     """
     course = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
+        
+    # Enrich with tutor name if missing
+    if not course.tutor_name and course.tutor_id:
+        course.tutor_name = await get_user_name_by_id(course.tutor_id, token=token.credentials)
+        
+    # Override tutor_id with name for response
+    if course.tutor_name:
+        course.tutor_id = course.tutor_name
+
+        
     return course
+
 
 @router.post("/{course_id}/modules", response_model=schemas.ModuleResponse, status_code=status.HTTP_201_CREATED)
 def create_module(course_id: int, module: schemas.ModuleCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
