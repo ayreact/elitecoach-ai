@@ -20,8 +20,10 @@ type CertificateStatus = "loading" | "verified" | "invalid" | "error";
 interface CertificateInfo {
   id?: string;
   course_id?: string | number;
+  course_name?: string;
   issued_at?: string;
   learner_name?: string;
+  owner_name?: string;
   verification_code?: string;
   pdf_url?: string;
   linkedin_share_url?: string;
@@ -78,14 +80,37 @@ function VerifyCertificatePage() {
         }
 
         if (!alive) return;
+
+        // Extract fields more robustly by searching the whole payload
+        const courseId =
+          dataObj.course_id ??
+          dataObj.courseId ??
+          findNestedString(payload, ["course_id", "courseId", "id"]);
+        
+        const courseName =
+          typeof dataObj.course_name === "string" ? dataObj.course_name :
+          typeof dataObj.course_title === "string" ? dataObj.course_title :
+          typeof dataObj.title === "string" ? dataObj.title :
+          findNestedString(payload, ["course_name", "course_title", "title"]);
+
+        const ownerName =
+          typeof dataObj.owner_name === "string" ? dataObj.owner_name :
+          typeof dataObj.learner_name === "string" ? dataObj.learner_name :
+          typeof dataObj.recipient === "string" ? dataObj.recipient :
+          findNestedString(payload, ["owner_name", "learner_name", "recipient"]);
+
+        const issuedAt =
+          (typeof dataObj.issued_at === "string" && dataObj.issued_at) ||
+          (typeof dataObj.issue_date === "string" && dataObj.issue_date) ||
+          (typeof dataObj.created_at === "string" && dataObj.created_at) ||
+          findNestedString(payload, ["issued_at", "issue_date", "created_at"]);
+
         setCertificate({
           id: typeof dataObj.id === "string" ? dataObj.id : undefined,
-          course_id: dataObj.course_id as string | number | undefined,
-          issued_at:
-            (typeof dataObj.issued_at === "string" && dataObj.issued_at) ||
-            (typeof dataObj.issue_date === "string" && dataObj.issue_date) ||
-            (typeof dataObj.created_at === "string" && dataObj.created_at) ||
-            undefined,
+          course_id: courseId as string | number | undefined,
+          course_name: courseName ?? undefined,
+          issued_at: issuedAt ?? undefined,
+          owner_name: ownerName ?? undefined,
           learner_name:
             typeof dataObj.learner_name === "string"
               ? dataObj.learner_name
@@ -176,15 +201,13 @@ function VerifyCertificatePage() {
                     Recipient
                   </div>
                   <div className="font-medium">
-                    {certificate.learner_name ?? "—"}
+                    {certificate.owner_name ?? certificate.learner_name ?? "—"}
                   </div>
                 </div>
                 <div>
-                  <div className="label-caps text-text-secondary">
-                    Course ID
-                  </div>
+                  <div className="label-caps text-text-secondary">Course</div>
                   <div className="font-medium">
-                    {certificate.course_id ?? "—"}
+                    {certificate.course_name ?? certificate.course_id ?? "—"}
                   </div>
                 </div>
                 <div>
@@ -204,13 +227,41 @@ function VerifyCertificatePage() {
               </div>
               <div className="flex flex-wrap gap-3">
                 {certificate.pdf_url && (
+                  <button
+                    onClick={() => {
+                      if (!certificate.pdf_url) return;
+                      const downloadUrl = certificate.pdf_url.includes(
+                        "res.cloudinary.com",
+                      )
+                        ? certificate.pdf_url.replace(
+                            "/upload/",
+                            "/upload/fl_attachment/",
+                          )
+                        : certificate.pdf_url;
+
+                      const link = document.createElement("a");
+                      link.href = downloadUrl;
+                      link.setAttribute(
+                        "download",
+                        `Certificate-${certificate.verification_code || "EC"}.pdf`,
+                      );
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                    }}
+                    className="h-10 px-4 inline-flex items-center bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors cursor-pointer"
+                  >
+                    Download PDF
+                  </button>
+                )}
+                {certificate.pdf_url && (
                   <a
                     href={certificate.pdf_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="h-10 px-4 inline-flex items-center bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors"
+                    className="h-10 px-4 inline-flex items-center border border-divider text-text-primary font-medium hover:bg-surface-hover transition-colors cursor-pointer"
                   >
-                    Download PDF
+                    View Certificate
                   </a>
                 )}
                 {certificate.linkedin_share_url && (
