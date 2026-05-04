@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..dependencies import validate_user
-from ..models import AssessmentResult, Certificate, LearnerProfile, AssessmentRubric, CareerBenchmark
+from ..models import AssessmentResult, Certificate, LearnerProfile, AssessmentRubric, CareerBenchmark, Course
 from ..schemas import (
     QuizSubmission,
     InlineQuizSubmission,
@@ -58,30 +58,6 @@ def _enrich_cert(cert: Certificate) -> CertificateResponse:
     response.course_name = cert.course_name
     response.owner_name = cert.owner_name
     return response
-
-
-async def _fetch_course_name(course_id: int, auth_token: str | None = None) -> str:
-    """Fetches the course title from the Content & Curriculum Service (Service C)."""
-    if not CCMS_SERVICE_URL:
-        return f"Course {course_id}"
-
-    endpoint = f"{CCMS_SERVICE_URL.rstrip('/')}/courses/{course_id}/curriculum"
-    try:
-        headers = {}
-        if auth_token:
-            headers["Authorization"] = f"Bearer {auth_token}"
-        
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(endpoint, headers=headers)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("title") or f"Course {course_id}"
-            else:
-                logger.warning(f"CCMS returned {response.status_code} for course {course_id}")
-    except Exception as e:
-        logger.error(f"Failed to fetch course name from CCMS: {e}")
-    
-    return f"Course {course_id}"
 
 
 def _get_or_create_profile(db: Session, user_id: str) -> LearnerProfile:
@@ -403,8 +379,9 @@ async def get_certificate(
         verification_code = f"EC-{uuid.uuid4().hex[:8].upper()}"
         user_name = user.get("name") or user.get("full_name") or f"Learner {auth_user_id[:6]}"
         
-        # Fetch the real course name from CCMS (Service C)
-        course_name = await _fetch_course_name(course_id, user.get("token"))
+        # Fetch the real course name directly from the shared database
+        db_course = db.query(Course).filter(Course.id == course_id).first()
+        course_name = db_course.title if db_course else f"Course {course_id}"
         
         issued_date = datetime.now()
         pdf_url = generate_certificate_pdf(

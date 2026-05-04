@@ -37,6 +37,13 @@ class Certificate(Base):
     co_brand_org_id = Column(String, nullable=True)
 
 
+class Course(Base):
+    """Minimal view of the courses table managed by Service C."""
+    __tablename__ = "courses"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True)
+
+
 class LearnerProfile(Base):
     __tablename__ = "learner_profiles"
 
