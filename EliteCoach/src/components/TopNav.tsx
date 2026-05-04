@@ -26,13 +26,22 @@ export function TopNav() {
 
         <nav className="hidden md:flex items-center gap-8">
           {(!isLoggedIn || isLearner) && (
-             <Link
-               to="/courses"
-               className="text-sm font-medium text-text-primary hover:text-primary transition-colors"
-               activeProps={{ className: "text-primary" }}
-             >
-               Courses
-             </Link>
+            <>
+              <Link
+                to="/courses"
+                className="text-sm font-medium text-text-primary hover:text-primary transition-colors"
+                activeProps={{ className: "text-primary" }}
+              >
+                Courses
+              </Link>
+              <Link
+                to="/verify-certificate"
+                className="text-sm font-medium text-text-primary hover:text-primary transition-colors"
+                activeProps={{ className: "text-primary" }}
+              >
+                Verify Certificate
+              </Link>
+            </>
           )}
           {isLoggedIn && isLearner && (
             <Link
@@ -110,13 +119,22 @@ export function TopNav() {
         <div className="md:hidden bg-surface-card border-t border-border">
           <div className="container-1200 py-4 flex flex-col gap-3">
             {(!isLoggedIn || isLearner) && (
-              <Link
-                to="/courses"
-                onClick={() => setOpen(false)}
-                className="py-2 text-sm font-medium"
-              >
-                Courses
-              </Link>
+              <>
+                <Link
+                  to="/courses"
+                  onClick={() => setOpen(false)}
+                  className="py-2 text-sm font-medium"
+                >
+                  Courses
+                </Link>
+                <Link
+                  to="/verify-certificate"
+                  onClick={() => setOpen(false)}
+                  className="py-2 text-sm font-medium"
+                >
+                  Verify Certificate
+                </Link>
+              </>
             )}
             {isLoggedIn && isLearner && (
               <Link

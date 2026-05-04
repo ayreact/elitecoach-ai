@@ -17,6 +17,7 @@ import { Route as LearningPathRouteImport } from './routes/learning-path'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CoursesRouteImport } from './routes/courses'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as VerifyCertificateIndexRouteImport } from './routes/verify-certificate.index'
 import { Route as VerifyCertificateCodeRouteImport } from './routes/verify-certificate.$code'
 import { Route as TutorCoursesRouteImport } from './routes/tutor.courses'
 import { Route as QuizCourseIdRouteImport } from './routes/quiz.$courseId'
@@ -64,6 +65,11 @@ const CoursesRoute = CoursesRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VerifyCertificateIndexRoute = VerifyCertificateIndexRouteImport.update({
+  id: '/verify-certificate/',
+  path: '/verify-certificate/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const VerifyCertificateCodeRoute = VerifyCertificateCodeRouteImport.update({
@@ -121,6 +127,7 @@ export interface FileRoutesByFullPath {
   '/quiz/$courseId': typeof QuizCourseIdRoute
   '/tutor/courses': typeof TutorCoursesRoute
   '/verify-certificate/$code': typeof VerifyCertificateCodeRoute
+  '/verify-certificate/': typeof VerifyCertificateIndexRoute
   '/org/$orgId/dashboard': typeof OrgOrgIdDashboardRoute
   '/org/$orgId/learners': typeof OrgOrgIdLearnersRoute
   '/org/$orgId/reports': typeof OrgOrgIdReportsRoute
@@ -139,6 +146,7 @@ export interface FileRoutesByTo {
   '/quiz/$courseId': typeof QuizCourseIdRoute
   '/tutor/courses': typeof TutorCoursesRoute
   '/verify-certificate/$code': typeof VerifyCertificateCodeRoute
+  '/verify-certificate': typeof VerifyCertificateIndexRoute
   '/org/$orgId/dashboard': typeof OrgOrgIdDashboardRoute
   '/org/$orgId/learners': typeof OrgOrgIdLearnersRoute
   '/org/$orgId/reports': typeof OrgOrgIdReportsRoute
@@ -158,6 +166,7 @@ export interface FileRoutesById {
   '/quiz/$courseId': typeof QuizCourseIdRoute
   '/tutor/courses': typeof TutorCoursesRoute
   '/verify-certificate/$code': typeof VerifyCertificateCodeRoute
+  '/verify-certificate/': typeof VerifyCertificateIndexRoute
   '/org/$orgId/dashboard': typeof OrgOrgIdDashboardRoute
   '/org/$orgId/learners': typeof OrgOrgIdLearnersRoute
   '/org/$orgId/reports': typeof OrgOrgIdReportsRoute
@@ -178,6 +187,7 @@ export interface FileRouteTypes {
     | '/quiz/$courseId'
     | '/tutor/courses'
     | '/verify-certificate/$code'
+    | '/verify-certificate/'
     | '/org/$orgId/dashboard'
     | '/org/$orgId/learners'
     | '/org/$orgId/reports'
@@ -196,6 +206,7 @@ export interface FileRouteTypes {
     | '/quiz/$courseId'
     | '/tutor/courses'
     | '/verify-certificate/$code'
+    | '/verify-certificate'
     | '/org/$orgId/dashboard'
     | '/org/$orgId/learners'
     | '/org/$orgId/reports'
@@ -214,6 +225,7 @@ export interface FileRouteTypes {
     | '/quiz/$courseId'
     | '/tutor/courses'
     | '/verify-certificate/$code'
+    | '/verify-certificate/'
     | '/org/$orgId/dashboard'
     | '/org/$orgId/learners'
     | '/org/$orgId/reports'
@@ -233,6 +245,7 @@ export interface RootRouteChildren {
   QuizCourseIdRoute: typeof QuizCourseIdRoute
   TutorCoursesRoute: typeof TutorCoursesRoute
   VerifyCertificateCodeRoute: typeof VerifyCertificateCodeRoute
+  VerifyCertificateIndexRoute: typeof VerifyCertificateIndexRoute
   OrgOrgIdDashboardRoute: typeof OrgOrgIdDashboardRoute
   OrgOrgIdLearnersRoute: typeof OrgOrgIdLearnersRoute
   OrgOrgIdReportsRoute: typeof OrgOrgIdReportsRoute
@@ -294,6 +307,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/verify-certificate/': {
+      id: '/verify-certificate/'
+      path: '/verify-certificate'
+      fullPath: '/verify-certificate/'
+      preLoaderRoute: typeof VerifyCertificateIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/verify-certificate/$code': {
@@ -369,6 +389,7 @@ const rootRouteChildren: RootRouteChildren = {
   QuizCourseIdRoute: QuizCourseIdRoute,
   TutorCoursesRoute: TutorCoursesRoute,
   VerifyCertificateCodeRoute: VerifyCertificateCodeRoute,
+  VerifyCertificateIndexRoute: VerifyCertificateIndexRoute,
   OrgOrgIdDashboardRoute: OrgOrgIdDashboardRoute,
   OrgOrgIdLearnersRoute: OrgOrgIdLearnersRoute,
   OrgOrgIdReportsRoute: OrgOrgIdReportsRoute,

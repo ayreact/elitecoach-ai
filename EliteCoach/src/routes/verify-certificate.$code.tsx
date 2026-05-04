@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { TopNav } from "@/components/TopNav";
 import { Footer } from "@/components/Footer";
@@ -125,12 +125,22 @@ function VerifyCertificatePage() {
         <span className="label-caps text-coral mb-2 inline-block">
           Certificate
         </span>
-        <h1 className="text-4xl font-bold tracking-tight">
-          Verify certificate
-        </h1>
-        <p className="text-text-secondary mt-2">
-          Code: <span className="font-mono">{safeCode || "—"}</span>
-        </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-4xl font-bold tracking-tight">
+              Verify certificate
+            </h1>
+            <p className="text-text-secondary mt-2">
+              Code: <span className="font-mono">{safeCode || "—"}</span>
+            </p>
+          </div>
+          <Link
+            to="/verify-certificate"
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            ← Verify another certificate
+          </Link>
+        </div>
 
         <div className="mt-8 card-base">
           {status === "loading" && (

@@ -36,6 +36,14 @@ export function Footer() {
               </li>
               <li>
                 <Link
+                  to="/verify-certificate"
+                  className="text-white/80 hover:text-white"
+                >
+                  Verify Certificate
+                </Link>
+              </li>
+              <li>
+                <Link
                   to="/learning-path"
                   className="text-white/80 hover:text-white"
                 >
