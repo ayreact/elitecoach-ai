@@ -9,7 +9,7 @@ import {
   findNestedString,
   normalizeUserType,
 } from "@/lib/api-client";
-import { type AuthUser, useAuthStore } from "@/lib/stores";
+import { type AuthUser, useAuthStore, useOrgStore } from "@/lib/stores";
 import { toast } from "sonner";
 
 function pickString(...values: unknown[]): string | null {
@@ -39,6 +39,7 @@ export const Route = createFileRoute("/login")({
 function LoginPage() {
   const navigate = useNavigate();
   const setSession = useAuthStore((s) => s.setSession);
+  const setOrg = useOrgStore((s) => s.setOrg);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -120,6 +121,10 @@ function LoginPage() {
           pickString(rawUser.userId, rawUser.user_id) ??
           findNestedString(rawUser, ["userId", "user_id"]) ??
           undefined,
+        organizationId:
+          pickString(rawUser.organizationId, rawUser.orgId, data.organizationId, data.orgId) ??
+          findNestedString(payload, ["organizationId", "orgId"]) ??
+          undefined,
         userType: normalizeUserType(
           rawUser.userType ??
             rawUser.user_type ??
@@ -133,12 +138,23 @@ function LoginPage() {
       };
       if (!accessToken) throw new Error("No access token returned");
       setSession({ user, accessToken, refreshToken });
+      if (user.organizationId) {
+        setOrg({ organizationId: user.organizationId });
+      }
       toast.success(
         `Welcome back${user.firstName ? ", " + user.firstName : ""}`,
       );
       if (user.userType === "TUTOR") navigate({ to: "/tutor/courses" });
+      else if (user.userType === "ORG_ADMIN") {
+        if (user.organizationId) {
+          navigate({ to: "/org/$orgId/dashboard", params: { orgId: user.organizationId } });
+        } else {
+          navigate({ to: "/org-setup" });
+        }
+      }
       else navigate({ to: "/dashboard" });
     } catch (err) {
+      console.error("[Login] Authentication failed:", err);
       const message = extractErrorMessage(err, "Login failed");
       toast.error(message);
       setErrors({

@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as VerifyOtpRouteImport } from './routes/verify-otp'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as OrgSetupRouteImport } from './routes/org-setup'
+import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as LearningPathRouteImport } from './routes/learning-path'
 import { Route as DashboardRouteImport } from './routes/dashboard'
@@ -19,6 +21,7 @@ import { Route as CoursesRouteImport } from './routes/courses'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as VerifyCertificateIndexRouteImport } from './routes/verify-certificate.index'
 import { Route as VerifyCertificateCodeRouteImport } from './routes/verify-certificate.$code'
+import { Route as TutorInboxRouteImport } from './routes/tutor.inbox'
 import { Route as TutorCoursesRouteImport } from './routes/tutor.courses'
 import { Route as QuizCourseIdRouteImport } from './routes/quiz.$courseId'
 import { Route as LearnSessionIdRouteImport } from './routes/learn.$sessionId'
@@ -40,6 +43,16 @@ const RegisterRoute = RegisterRouteImport.update({
 const ProfileRoute = ProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OrgSetupRoute = OrgSetupRouteImport.update({
+  id: '/org-setup',
+  path: '/org-setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OnboardingRoute = OnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -75,6 +88,11 @@ const VerifyCertificateIndexRoute = VerifyCertificateIndexRouteImport.update({
 const VerifyCertificateCodeRoute = VerifyCertificateCodeRouteImport.update({
   id: '/verify-certificate/$code',
   path: '/verify-certificate/$code',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TutorInboxRoute = TutorInboxRouteImport.update({
+  id: '/tutor/inbox',
+  path: '/tutor/inbox',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TutorCoursesRoute = TutorCoursesRouteImport.update({
@@ -119,6 +137,8 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRoute
   '/learning-path': typeof LearningPathRoute
   '/login': typeof LoginRoute
+  '/onboarding': typeof OnboardingRoute
+  '/org-setup': typeof OrgSetupRoute
   '/profile': typeof ProfileRoute
   '/register': typeof RegisterRoute
   '/verify-otp': typeof VerifyOtpRoute
@@ -126,6 +146,7 @@ export interface FileRoutesByFullPath {
   '/learn/$sessionId': typeof LearnSessionIdRoute
   '/quiz/$courseId': typeof QuizCourseIdRoute
   '/tutor/courses': typeof TutorCoursesRoute
+  '/tutor/inbox': typeof TutorInboxRoute
   '/verify-certificate/$code': typeof VerifyCertificateCodeRoute
   '/verify-certificate/': typeof VerifyCertificateIndexRoute
   '/org/$orgId/dashboard': typeof OrgOrgIdDashboardRoute
@@ -138,6 +159,8 @@ export interface FileRoutesByTo {
   '/dashboard': typeof DashboardRoute
   '/learning-path': typeof LearningPathRoute
   '/login': typeof LoginRoute
+  '/onboarding': typeof OnboardingRoute
+  '/org-setup': typeof OrgSetupRoute
   '/profile': typeof ProfileRoute
   '/register': typeof RegisterRoute
   '/verify-otp': typeof VerifyOtpRoute
@@ -145,6 +168,7 @@ export interface FileRoutesByTo {
   '/learn/$sessionId': typeof LearnSessionIdRoute
   '/quiz/$courseId': typeof QuizCourseIdRoute
   '/tutor/courses': typeof TutorCoursesRoute
+  '/tutor/inbox': typeof TutorInboxRoute
   '/verify-certificate/$code': typeof VerifyCertificateCodeRoute
   '/verify-certificate': typeof VerifyCertificateIndexRoute
   '/org/$orgId/dashboard': typeof OrgOrgIdDashboardRoute
@@ -158,6 +182,8 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRoute
   '/learning-path': typeof LearningPathRoute
   '/login': typeof LoginRoute
+  '/onboarding': typeof OnboardingRoute
+  '/org-setup': typeof OrgSetupRoute
   '/profile': typeof ProfileRoute
   '/register': typeof RegisterRoute
   '/verify-otp': typeof VerifyOtpRoute
@@ -165,6 +191,7 @@ export interface FileRoutesById {
   '/learn/$sessionId': typeof LearnSessionIdRoute
   '/quiz/$courseId': typeof QuizCourseIdRoute
   '/tutor/courses': typeof TutorCoursesRoute
+  '/tutor/inbox': typeof TutorInboxRoute
   '/verify-certificate/$code': typeof VerifyCertificateCodeRoute
   '/verify-certificate/': typeof VerifyCertificateIndexRoute
   '/org/$orgId/dashboard': typeof OrgOrgIdDashboardRoute
@@ -179,6 +206,8 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/learning-path'
     | '/login'
+    | '/onboarding'
+    | '/org-setup'
     | '/profile'
     | '/register'
     | '/verify-otp'
@@ -186,6 +215,7 @@ export interface FileRouteTypes {
     | '/learn/$sessionId'
     | '/quiz/$courseId'
     | '/tutor/courses'
+    | '/tutor/inbox'
     | '/verify-certificate/$code'
     | '/verify-certificate/'
     | '/org/$orgId/dashboard'
@@ -198,6 +228,8 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/learning-path'
     | '/login'
+    | '/onboarding'
+    | '/org-setup'
     | '/profile'
     | '/register'
     | '/verify-otp'
@@ -205,6 +237,7 @@ export interface FileRouteTypes {
     | '/learn/$sessionId'
     | '/quiz/$courseId'
     | '/tutor/courses'
+    | '/tutor/inbox'
     | '/verify-certificate/$code'
     | '/verify-certificate'
     | '/org/$orgId/dashboard'
@@ -217,6 +250,8 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/learning-path'
     | '/login'
+    | '/onboarding'
+    | '/org-setup'
     | '/profile'
     | '/register'
     | '/verify-otp'
@@ -224,6 +259,7 @@ export interface FileRouteTypes {
     | '/learn/$sessionId'
     | '/quiz/$courseId'
     | '/tutor/courses'
+    | '/tutor/inbox'
     | '/verify-certificate/$code'
     | '/verify-certificate/'
     | '/org/$orgId/dashboard'
@@ -237,6 +273,8 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRoute
   LearningPathRoute: typeof LearningPathRoute
   LoginRoute: typeof LoginRoute
+  OnboardingRoute: typeof OnboardingRoute
+  OrgSetupRoute: typeof OrgSetupRoute
   ProfileRoute: typeof ProfileRoute
   RegisterRoute: typeof RegisterRoute
   VerifyOtpRoute: typeof VerifyOtpRoute
@@ -244,6 +282,7 @@ export interface RootRouteChildren {
   LearnSessionIdRoute: typeof LearnSessionIdRoute
   QuizCourseIdRoute: typeof QuizCourseIdRoute
   TutorCoursesRoute: typeof TutorCoursesRoute
+  TutorInboxRoute: typeof TutorInboxRoute
   VerifyCertificateCodeRoute: typeof VerifyCertificateCodeRoute
   VerifyCertificateIndexRoute: typeof VerifyCertificateIndexRoute
   OrgOrgIdDashboardRoute: typeof OrgOrgIdDashboardRoute
@@ -272,6 +311,20 @@ declare module '@tanstack/react-router' {
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/org-setup': {
+      id: '/org-setup'
+      path: '/org-setup'
+      fullPath: '/org-setup'
+      preLoaderRoute: typeof OrgSetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/onboarding': {
+      id: '/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof OnboardingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -321,6 +374,13 @@ declare module '@tanstack/react-router' {
       path: '/verify-certificate/$code'
       fullPath: '/verify-certificate/$code'
       preLoaderRoute: typeof VerifyCertificateCodeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tutor/inbox': {
+      id: '/tutor/inbox'
+      path: '/tutor/inbox'
+      fullPath: '/tutor/inbox'
+      preLoaderRoute: typeof TutorInboxRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/tutor/courses': {
@@ -381,6 +441,8 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRoute,
   LearningPathRoute: LearningPathRoute,
   LoginRoute: LoginRoute,
+  OnboardingRoute: OnboardingRoute,
+  OrgSetupRoute: OrgSetupRoute,
   ProfileRoute: ProfileRoute,
   RegisterRoute: RegisterRoute,
   VerifyOtpRoute: VerifyOtpRoute,
@@ -388,6 +450,7 @@ const rootRouteChildren: RootRouteChildren = {
   LearnSessionIdRoute: LearnSessionIdRoute,
   QuizCourseIdRoute: QuizCourseIdRoute,
   TutorCoursesRoute: TutorCoursesRoute,
+  TutorInboxRoute: TutorInboxRoute,
   VerifyCertificateCodeRoute: VerifyCertificateCodeRoute,
   VerifyCertificateIndexRoute: VerifyCertificateIndexRoute,
   OrgOrgIdDashboardRoute: OrgOrgIdDashboardRoute,

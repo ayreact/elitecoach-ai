@@ -33,6 +33,64 @@ function ProfilePage() {
   const profileEditingSupported = false;
   const [certs, setCerts] = useState<any[]>([]);
   const [skillGap, setSkillGap] = useState<any>(null);
+  const [subscriptionStatus, setSubscriptionStatus] = useState("free");
+
+  useEffect(() => {
+    if (!user) return;
+    const userId = user.id ?? user.userId ?? "learner";
+    const sub = localStorage.getItem(`elitecoach.subscription.${userId}`);
+    if (sub === "premium") {
+      setSubscriptionStatus("premium");
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://js.paystack.co/v1/inline.js";
+    script.async = true;
+    document.body.appendChild(script);
+
+    return () => {
+      try {
+        document.body.removeChild(script);
+      } catch (e) {}
+    };
+  }, [user]);
+
+  const handlePaystackPayment = () => {
+    if (!(window as any).PaystackPop) {
+      toast.error("Paystack SDK not loaded yet. Please wait a moment.");
+      return;
+    }
+    
+    const handler = (window as any).PaystackPop.setup({
+      key: "pk_test_d3a5a7698544bd0db514ea40f6087b3a763806ba",
+      email: form.email || user?.email || "learner@elitecoach.ai",
+      amount: 10000 * 100, // 10,000 NGN in kobo
+      currency: "NGN",
+      callback: function(response: any) {
+        toast.success("Upgrade successful! You are now an EliteCoach Premium member.");
+        const userId = user?.id ?? user?.userId ?? "learner";
+        localStorage.setItem(`elitecoach.subscription.${userId}`, "premium");
+        setSubscriptionStatus("premium");
+
+        // send notification email/WhatsApp
+        try {
+          notificationsApi.post(
+            "/api/v1/notification/send",
+            {
+              channel: "email",
+              to: form.email || user?.email,
+              subject: "Premium Membership Activated — EliteCoach",
+              body: `Hello ${form.firstName || "Learner"},\n\nYour Premium subscription has been successfully activated. Transaction Reference: ${response.reference}.\n\nStart learning with unlimited AI Tutoring and verified certificates now!`
+            }
+          ).catch(() => {});
+        } catch (e) {}
+      },
+      onClose: function() {
+        toast.info("Payment checkout cancelled.");
+      }
+    });
+    handler.openIframe();
+  };
 
   useEffect(() => {
     Promise.all([
@@ -231,6 +289,58 @@ function ProfilePage() {
                   : "Editing unavailable"}
               </button>
             </div>
+
+            {!isTutor && (
+              <div className="card-base relative overflow-hidden bg-gradient-to-br from-navy to-[#1f283d] text-white border-navy shadow-lg">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full blur-2xl pointer-events-none" />
+                <div className="absolute bottom-0 left-0 w-32 h-32 bg-coral/10 rounded-full blur-2xl pointer-events-none" />
+                
+                <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                  <div className="flex-1">
+                    <span className="label-caps text-coral mb-2 inline-block">Subscription & Plans</span>
+                    <h3 className="text-2xl font-bold text-white mb-2">
+                      {subscriptionStatus === "premium" ? "Premium Membership Active" : "Get Premium Membership"}
+                    </h3>
+                    <p className="text-white/70 text-sm max-w-md leading-relaxed">
+                      {subscriptionStatus === "premium"
+                        ? "Thank you for supporting EliteCoach. You have unlimited access to all courses, diagnostic evaluations, RAG AI tutors, and custom certifications."
+                        : "Unlock unlimited chats with your personal AI tutors, customized learning paths, and fully verified professional certificates for career advancement."}
+                    </p>
+                    
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mt-4 text-xs text-white/60 font-mono">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-success" /> Unlimited AI tutor chats
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-success" /> Custom career pathways
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-success" /> Digital certification
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="shrink-0 w-full md:w-auto text-center md:text-right border-t border-white/10 md:border-t-0 pt-4 md:pt-0">
+                    <div className="mb-3">
+                      <span className="text-3xl font-extrabold text-white">₦10,000</span>
+                      <span className="text-white/60 text-xs"> / month</span>
+                    </div>
+                    {subscriptionStatus === "premium" ? (
+                      <span className="inline-flex items-center gap-1.5 px-4 py-2 bg-success/20 text-success border border-success/30 rounded text-sm font-bold justify-center">
+                        <span className="w-2 h-2 rounded-full bg-success animate-ping shrink-0" /> Premium Plan
+                      </span>
+                    ) : (
+                      <button
+                        onClick={handlePaystackPayment}
+                        className="w-full md:w-auto h-11 px-6 bg-coral text-white font-bold hover:bg-coral/90 transition-all rounded shadow-md cursor-pointer"
+                      >
+                        Upgrade via Paystack
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {!isTutor && (
               <div className="card-base">

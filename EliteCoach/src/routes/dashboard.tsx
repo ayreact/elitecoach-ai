@@ -1,4 +1,4 @@
-﻿import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { requireLearner } from "@/lib/auth-guard";
 import { useEffect, useMemo, useState } from "react";
 import { TopNav } from "@/components/TopNav";
@@ -99,6 +99,7 @@ function DashboardPage() {
     const [courses, setCourses] = useState<CourseCardData[]>([]);
     const [path, setPath] = useState<{
         goal?: string;
+        target_role?: string;
         next_course?: string;
     } | null>(null);
     const [loading, setLoading] = useState(true);
@@ -502,22 +503,22 @@ function DashboardPage() {
                             </div>
                             
                             {/* 1. Changed path?.goal to path?.target_role */}
-                            <h3 className="text-black/70 text-xl font-semibold mb-2 capitalize">
+                            <h3 className="text-white text-xl font-semibold mb-2 capitalize">
                                 {path?.target_role ?? "Set your career goal"}
                             </h3>
                             
                             {/* 2. Changed path?.next_course to look inside the next_courses array */}
-                            <p className="text-black/70 text-sm leading-relaxed mb-4">
+                            <p className="text-white/70 text-sm leading-relaxed mb-4">
                                 {(path as any)?.next_courses?.[0]?.title
                                     ? `Next up: ${(path as any).next_courses[0].title}`
                                     : "Generate a personalised learning path to reach your next role."}
                             </p>
                             
                             <Link
-                                to="/learning-path"
-                                className="inline-flex items-center gap-2 text-coral font-medium text-sm hover:underline"
+                                to={path?.target_role ? "/learning-path" : "/onboarding"}
+                                className="inline-flex items-center gap-2 text-coral font-medium text-sm hover:underline cursor-pointer"
                             >
-                                View path <ArrowRight size={14} />
+                                {path?.target_role ? "View path" : "Get started"} <ArrowRight size={14} />
                             </Link>
                         </div>
                 </div>

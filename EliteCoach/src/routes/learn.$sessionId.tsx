@@ -9,6 +9,11 @@ import {
     notificationsApi,
     extractErrorMessage,
     unwrapApiData,
+    escalateSessionToTutor,
+    fetchInlineKnowledgeChecks,
+    generateModuleAssessment,
+    type KnowledgeCheck,
+    type ModuleAssessment,
 } from "@/lib/api-client";
 import { useAuthStore, useSessionStore } from "@/lib/stores";
 import { toast } from "sonner";
@@ -21,6 +26,7 @@ import {
     MessageSquare,
     BookOpen,
     Award,
+    Zap,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
@@ -85,6 +91,70 @@ function LearningRoomPage() {
     const [showSummary, setShowSummary] = useState<string | null>(null);
     const [mobileTab, setMobileTab] = useState<"lesson" | "tutor">("lesson");
     const chatRef = useRef<HTMLDivElement>(null);
+
+    const [escalated, setEscalated] = useState(false);
+
+    // Knowledge Checks (Inline)
+    const [knowledgeChecks, setKnowledgeChecks] = useState<KnowledgeCheck[]>([]);
+    const [kcAnswers, setKcAnswers] = useState<Record<string, string>>({});
+    const [kcPassed, setKcPassed] = useState(false);
+
+    // Module Assessments
+    const [moduleAssessment, setModuleAssessment] = useState<ModuleAssessment | null>(null);
+    const [maAnswers, setMaAnswers] = useState<Record<string, string>>({});
+    const [maResult, setMaResult] = useState<{ score: number, passed: boolean } | null>(null);
+
+    useEffect(() => {
+        if (!sessionId) return;
+        const raw = localStorage.getItem("elitecoach.mock.escalations");
+        if (raw) {
+            try {
+                const list = JSON.parse(raw);
+                const hasEsc = list.some((x: any) => String(x.id) === String(sessionId) && x.status !== "resolved");
+                if (hasEsc) {
+                    setEscalated(true);
+                }
+            } catch (e) {}
+        }
+    }, [sessionId]);
+
+    const triggerEscalation = async (reason: string) => {
+        if (escalated) return;
+        setEscalated(true);
+        const learnerName = `${user?.firstName || "Learner"} ${user?.lastName || ""}`.trim();
+        const learnerEmail = user?.email || "learner@elitecoach.ai";
+        const courseTitle = currentModule?.title ?? "General Subject";
+
+        try {
+            await escalateSessionToTutor(
+                String(sessionId),
+                learnerName,
+                learnerEmail,
+                courseTitle,
+                String(courseId ?? "1"),
+                reason,
+                messages.map((m) => ({
+                    id: m.id,
+                    role: m.role as any,
+                    content: m.content,
+                    ts: m.ts,
+                }))
+            );
+            toast.info("This session has been escalated to a human tutor for assistance.");
+        } catch (e) {
+            console.error("Escalation failed", e);
+        }
+    };
+
+    const triggerManualEscalation = async () => {
+        addMessage({
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "⚠️ *System: Initiating human tutor escalation at user's request. Tutors have been notified.*",
+            ts: Date.now(),
+        });
+        await triggerEscalation("Learner manually requested human tutor assistance.");
+    };
 
     useEffect(() => {
         if (!courseId) return;
@@ -187,14 +257,58 @@ function LearningRoomPage() {
         toast.success("Lesson marked complete");
     };
 
-    const goNext = () => {
+    useEffect(() => {
+        if (!currentLesson) return;
+        setKnowledgeChecks([]);
+        setKcAnswers({});
+        setKcPassed(false);
+        fetchInlineKnowledgeChecks(currentLesson.id ?? "unknown", currentLesson.title)
+            .then(kcs => {
+                setKnowledgeChecks(kcs);
+                if (kcs.length === 0) setKcPassed(true);
+            })
+            .catch(() => {
+                setKcPassed(true);
+            });
+    }, [currentLesson?.id, currentLesson?.title]);
+
+    const goNext = async () => {
         if (!currentModule) return;
+        
+        if (knowledgeChecks.length > 0 && !kcPassed) {
+            toast.error("Please pass the knowledge check below to proceed.");
+            return;
+        }
+
         const lessons = currentModule.content_chunks ?? [];
         if (activeLesson < lessons.length - 1) {
             setActiveLesson(activeLesson + 1);
         } else if (activeModule < modules.length - 1) {
-            setActiveModule(activeModule + 1);
-            setActiveLesson(0);
+            const ma = await generateModuleAssessment(currentModule.id, currentModule.title);
+            setModuleAssessment(ma);
+            setMaAnswers({});
+            setMaResult(null);
+        }
+    };
+
+    const submitModuleAssessment = () => {
+        if (!moduleAssessment) return;
+        let correct = 0;
+        moduleAssessment.questions.forEach(q => {
+            if (maAnswers[q.id] === q.correctAnswer) correct++;
+        });
+        const score = Math.round((correct / moduleAssessment.questions.length) * 100);
+        const passed = score >= 70;
+        setMaResult({ score, passed });
+        if (passed) {
+            toast.success("Module Assessment passed! Unlocking next module.");
+            setTimeout(() => {
+                setModuleAssessment(null);
+                setActiveModule(activeModule + 1);
+                setActiveLesson(0);
+            }, 2500);
+        } else {
+            toast.error("You need 70% to pass. Please review the material and try again.");
         }
     };
 
@@ -208,8 +322,8 @@ function LearningRoomPage() {
         }
     };
 
-    const sendMessage = async () => {
-        const text = input.trim();
+    const sendMessage = async (overrideText?: string) => {
+        const text = (typeof overrideText === "string" ? overrideText : input).trim();
         if (!text) return;
         const subjectId =
             coerceIntegerId(currentLesson?.id) ??
@@ -221,6 +335,51 @@ function LearningRoomPage() {
             toast.error(
                 "This lesson is missing the numeric subject ID required by the tutor API."
             );
+            return;
+        }
+
+        // Escalation checks
+        const userMsgs = messages.filter((m) => m.role === "user");
+        const isRepeat =
+            userMsgs.length >= 2 &&
+            userMsgs[userMsgs.length - 1].content.trim().toLowerCase() === text.toLowerCase() &&
+            userMsgs[userMsgs.length - 2].content.trim().toLowerCase() === text.toLowerCase();
+
+        const frustrationKeywords = [
+            "stupid", "useless", "confusing", "horrible", "waste of time",
+            "frustrated", "frustrated language", "terrible", "doesn't make sense",
+            "worst", "hate", "crap", "garbage", "trash", "annoyed"
+        ];
+        const isFrustrated = frustrationKeywords.some((kw) => text.toLowerCase().includes(kw));
+
+        const groundingKeywords = [
+            "polars", "spark cluster", "kubernetes", "docker container",
+            "aws billing", "unsupported", "grounding block", "human tutor",
+            "escalate", "contact human", "talk to human", "real tutor"
+        ];
+        const isGroundingBlock = groundingKeywords.some((kw) => text.toLowerCase().includes(kw));
+
+        if (isRepeat || isFrustrated || isGroundingBlock) {
+            setInput("");
+            addMessage({
+                id: crypto.randomUUID(),
+                role: "user",
+                content: text,
+                ts: Date.now(),
+            });
+
+            let reason = "AI tutor grounding block - unsupported question context.";
+            if (isRepeat) reason = "Learner asked the same question 3 times.";
+            else if (isFrustrated) reason = "Frustrated language detected in learner message.";
+
+            addMessage({
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: "⚠️ *System: This conversation has been escalated to a human tutor. Tutors have been notified and will respond to you shortly.*",
+                ts: Date.now() + 100,
+            });
+
+            await triggerEscalation(reason);
             return;
         }
 
@@ -378,6 +537,24 @@ function LearningRoomPage() {
         navigate({ to: "/dashboard" });
     };
 
+    const handleKcSelect = (kc: KnowledgeCheck, option: string) => {
+        setKcAnswers(prev => ({ ...prev, [kc.id]: option }));
+        if (option === kc.correctAnswer) {
+            toast.success("Correct!");
+            const allCorrect = knowledgeChecks.every(k => 
+                (k.id === kc.id ? option : kcAnswers[k.id]) === k.correctAnswer
+            );
+            if (allCorrect) setKcPassed(true);
+        } else {
+            toast.error("Not quite! Your AI tutor will help explain.");
+            const msg = `I incorrectly answered "${option}" to the question "${kc.question}". The correct answer is "${kc.correctAnswer}". Please explain why in 1-2 short sentences so I understand.`;
+            setMobileTab("tutor");
+            setTimeout(() => {
+                sendMessage(msg);
+            }, 100);
+        }
+    };
+
     const SidebarTree = (
         <div className="h-full flex flex-col">
             <div className="p-6 border-b border-white/10">
@@ -456,7 +633,64 @@ function LearningRoomPage() {
         </div>
     );
 
-    const LessonCenter = (
+    const LessonCenter = moduleAssessment ? (
+        <div className="flex flex-col h-full bg-surface-card overflow-hidden">
+            <div className="flex items-center justify-between px-8 py-4 border-b border-border bg-primary text-primary-foreground">
+                <div className="text-sm font-bold truncate">
+                    {moduleAssessment.title}
+                </div>
+                <button onClick={() => setModuleAssessment(null)} className="opacity-80 hover:opacity-100">
+                    <X size={20} />
+                </button>
+            </div>
+            <div className="flex-1 overflow-auto px-8 py-10 bg-surface">
+                <div className="max-w-2xl mx-auto">
+                    {maResult && (
+                        <div className={`mb-8 p-6 border-l-4 rounded-r-lg ${maResult.passed ? 'border-success bg-success/10' : 'border-destructive bg-destructive/10'}`}>
+                            <h3 className="text-lg font-bold mb-1">
+                                {maResult.passed ? "Module Passed!" : "Module Failed"}
+                            </h3>
+                            <p className="text-sm">You scored {maResult.score}%. {maResult.passed ? "Great job, the next module is unlocked." : "You need 70% to pass. Please try again."}</p>
+                        </div>
+                    )}
+                    <h2 className="text-2xl font-bold mb-6">Module Assessment</h2>
+                    <div className="space-y-8">
+                        {moduleAssessment.questions.map((q, i) => (
+                            <div key={q.id} className="bg-white p-6 rounded-lg shadow-sm border border-border">
+                                <p className="font-semibold mb-4 text-lg">{i + 1}. {q.question}</p>
+                                <div className="space-y-3">
+                                    {q.options.map(opt => {
+                                        const isSel = maAnswers[q.id] === opt;
+                                        return (
+                                            <label key={opt} className={`flex items-center gap-3 p-4 border rounded cursor-pointer transition-colors ${isSel ? 'border-primary bg-primary/5' : 'border-border hover:bg-slate-50'}`}>
+                                                <input 
+                                                    type="radio" 
+                                                    name={`q-${q.id}`} 
+                                                    checked={isSel} 
+                                                    onChange={() => setMaAnswers(prev => ({ ...prev, [q.id]: opt }))} 
+                                                    className="w-4 h-4 text-primary"
+                                                />
+                                                <span>{opt}</span>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+            <div className="border-t border-border px-8 py-4 flex items-center justify-end bg-surface-card">
+                <button
+                    onClick={submitModuleAssessment}
+                    disabled={Object.keys(maAnswers).length !== moduleAssessment.questions.length || maResult !== null}
+                    className="h-11 px-6 bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors disabled:opacity-50"
+                >
+                    Submit Assessment
+                </button>
+            </div>
+        </div>
+    ) : (
         <div className="flex flex-col h-full bg-surface-card overflow-hidden">
             <div className="flex items-center justify-between px-8 py-4 border-b border-border">
                 <div className="text-sm text-text-secondary truncate">
@@ -523,6 +757,47 @@ function LearningRoomPage() {
                                 </div>
                             )}
                         </div>
+                        
+                        {knowledgeChecks.length > 0 && (
+                            <div className="mt-12 pt-8 border-t border-border">
+                                <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
+                                    <Zap size={20} className="text-primary" />
+                                    Knowledge Check
+                                </h3>
+                                <div className="space-y-8">
+                                    {knowledgeChecks.map(kc => {
+                                        const selected = kcAnswers[kc.id];
+                                        const isCorrect = selected === kc.correctAnswer;
+                                        return (
+                                            <div key={kc.id} className="bg-surface-card p-6 border border-border rounded-lg shadow-sm">
+                                                <p className="font-semibold mb-4">{kc.question}</p>
+                                                <div className="space-y-2">
+                                                    {kc.options.map(opt => {
+                                                        const isSel = selected === opt;
+                                                        const isOptCorrect = opt === kc.correctAnswer;
+                                                        let btnClass = "border-border hover:border-primary/40";
+                                                        if (isSel) {
+                                                            btnClass = isOptCorrect 
+                                                                ? "border-success bg-success/10 text-success-foreground" 
+                                                                : "border-destructive bg-destructive/10 text-destructive-foreground";
+                                                        }
+                                                        return (
+                                                            <button
+                                                                key={opt}
+                                                                onClick={() => handleKcSelect(kc, opt)}
+                                                                className={`w-full text-left px-4 py-3 border-2 rounded transition-colors ${btnClass}`}
+                                                            >
+                                                                {opt}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 ) : (
                     <div className="max-w-3xl mx-auto">
@@ -551,7 +826,8 @@ function LearningRoomPage() {
                 {!isLastLesson && (
                     <button
                         onClick={goNext}
-                        className="h-11 px-4 inline-flex items-center gap-2 bg-primary text-primary-foreground text-sm font-medium hover:bg-primary-hover transition-colors"
+                        disabled={knowledgeChecks.length > 0 && !kcPassed}
+                        className="h-11 px-4 inline-flex items-center gap-2 bg-primary text-primary-foreground text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50"
                     >
                         Next <ChevronRight size={16} />
                     </button>
@@ -572,16 +848,26 @@ function LearningRoomPage() {
 
     const TutorPanel = (
         <div className="flex flex-col h-full min-h-0 bg-surface-card border-l border-border">
-            <div className="flex-none px-5 py-4 border-b border-border flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold">
-                    AI
-                </div>
-                <div>
-                    <div className="font-semibold text-sm">EliteCoach AI</div>
-                    <div className="text-xs text-text-secondary">
-                        Always here to help
+            <div className="flex-none px-5 py-4 border-b border-border flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold">
+                        AI
+                    </div>
+                    <div>
+                        <div className="font-semibold text-sm">EliteCoach AI</div>
+                        <div className="text-xs text-text-secondary">
+                            Always here to help
+                        </div>
                     </div>
                 </div>
+                {!escalated && (
+                    <button
+                        onClick={triggerManualEscalation}
+                        className="text-xs font-semibold text-coral border border-coral/30 px-2.5 py-1 rounded hover:bg-coral/5 transition-colors cursor-pointer"
+                    >
+                        Ask Human
+                    </button>
+                )}
             </div>
 
             <div
@@ -636,27 +922,38 @@ function LearningRoomPage() {
                 )}
             </div>
 
-            <div className="flex-none p-4 border-t border-border bg-surface-card">
-                <div className="flex gap-2">
-                    <input
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={(e) =>
-                            e.key === "Enter" && !e.shiftKey && sendMessage()
-                        }
-                        placeholder="Ask your tutor..."
-                        disabled={sending}
-                        className="flex-1 h-11 px-3 border border-border focus:border-primary outline-none text-sm bg-white"
-                    />
-                    <button
-                        onClick={sendMessage}
-                        disabled={sending || !input.trim()}
-                        className="h-11 w-11 bg-primary text-primary-foreground hover:bg-primary-hover transition-colors flex items-center justify-center disabled:opacity-50"
-                    >
-                        <Send size={16} />
-                    </button>
+            {escalated ? (
+                <div className="flex-none p-5 border-t border-border bg-coral/[0.03] text-center">
+                    <div className="text-sm font-bold text-coral mb-1.5 flex items-center justify-center gap-1.5">
+                        <Zap size={14} className="animate-pulse" /> Escalated to Human Tutor
+                    </div>
+                    <p className="text-xs text-text-secondary max-w-sm mx-auto leading-relaxed">
+                        A professional tutor has been notified and will review this transcript. You will receive a notification via email or WhatsApp once a response is ready.
+                    </p>
                 </div>
-            </div>
+            ) : (
+                <div className="flex-none p-4 border-t border-border bg-surface-card">
+                    <div className="flex gap-2">
+                        <input
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyDown={(e) =>
+                                e.key === "Enter" && !e.shiftKey && sendMessage()
+                            }
+                            placeholder="Ask your tutor..."
+                            disabled={sending}
+                            className="flex-1 h-11 px-3 border border-border focus:border-primary outline-none text-sm bg-white"
+                        />
+                        <button
+                            onClick={sendMessage}
+                            disabled={sending || !input.trim()}
+                            className="h-11 w-11 bg-primary text-primary-foreground hover:bg-primary-hover transition-colors flex items-center justify-center disabled:opacity-50 cursor-pointer"
+                        >
+                            <Send size={16} />
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 

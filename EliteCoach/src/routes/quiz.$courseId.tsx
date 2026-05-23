@@ -109,6 +109,7 @@ function QuizPage() {
     const [idx, setIdx] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
+    const [timeLeft, setTimeLeft] = useState<number | null>(null);
     const [result, setResult] = useState<{
         score: number;
         total: number;
@@ -119,7 +120,6 @@ function QuizPage() {
     const [configLevel, setConfigLevel] = useState(searchLevel || "beginner");
     const [configCount, setConfigCount] = useState(searchCount || 5);
     
-    // IMPORTANT: Both of these must start as false so the modal shows first
     const [startFetch, setStartFetch] = useState(false);
     const [loading, setLoading] = useState(false); 
     
@@ -204,8 +204,10 @@ function QuizPage() {
                                 "It adapts explanations to your pace",
                         },
                     ]);
+                    setTimeLeft(120);
                 } else {
                     setQuestions(data);
+                    setTimeLeft(data.length * 120);
                 }
             })
             .catch((err) => {
@@ -232,6 +234,16 @@ function QuizPage() {
             alive = false;
         };
     }, [courseId, configLevel, configCount, startFetch]);
+
+    useEffect(() => {
+        if (timeLeft === null || result || showConfig || loading || submitting) return;
+        if (timeLeft <= 0) {
+            submit();
+            return;
+        }
+        const timerId = setInterval(() => setTimeLeft(t => (t !== null && t > 0 ? t - 1 : 0)), 1000);
+        return () => clearInterval(timerId);
+    }, [timeLeft, result, showConfig, loading, submitting]);
 
     const submit = async () => {
         setSubmitting(true);
@@ -624,9 +636,16 @@ function QuizPage() {
             <div className="container-1200 py-12 max-w-2xl">
                 <div className="mb-10">
                     <div className="flex items-center justify-between text-sm mb-3">
-                        <span className="label-caps text-text-secondary">
-                            Question {idx + 1} of {questions.length}
-                        </span>
+                        <div className="flex items-center gap-4">
+                            <span className="label-caps text-text-secondary">
+                                Question {idx + 1} of {questions.length}
+                            </span>
+                            {timeLeft !== null && (
+                                <span className={`font-mono font-medium ${timeLeft < 60 ? 'text-destructive animate-pulse' : 'text-text-primary'}`}>
+                                    ⏱ {Math.floor(timeLeft / 60).toString().padStart(2, '0')}:{(timeLeft % 60).toString().padStart(2, '0')}
+                                </span>
+                            )}
+                        </div>
                         <span className="font-mono text-text-secondary">{progress}%</span>
                     </div>
                     <div className="h-1 w-full bg-border rounded-sm overflow-hidden">

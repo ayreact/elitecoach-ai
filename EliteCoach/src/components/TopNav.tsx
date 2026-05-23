@@ -62,13 +62,22 @@ export function TopNav() {
             </Link>
           )}
           {isTutor && (
-            <Link
-              to="/tutor/courses"
-              className="text-sm font-medium text-text-primary hover:text-primary transition-colors"
-              activeProps={{ className: "text-primary" }}
-            >
-              Tutor CMS
-            </Link>
+            <>
+              <Link
+                to="/tutor/courses"
+                className="text-sm font-medium text-text-primary hover:text-primary transition-colors"
+                activeProps={{ className: "text-primary" }}
+              >
+                Tutor CMS
+              </Link>
+              <Link
+                to="/tutor/inbox"
+                className="text-sm font-medium text-text-primary hover:text-primary transition-colors"
+                activeProps={{ className: "text-primary" }}
+              >
+                Tutor Inbox
+              </Link>
+            </>
           )}
         </nav>
 
@@ -155,13 +164,22 @@ export function TopNav() {
               </Link>
             )}
             {isTutor && (
-              <Link
-                to="/tutor/courses"
-                onClick={() => setOpen(false)}
-                className="py-2 text-sm font-medium"
-              >
-                Tutor CMS
-              </Link>
+              <>
+                <Link
+                  to="/tutor/courses"
+                  onClick={() => setOpen(false)}
+                  className="py-2 text-sm font-medium"
+                >
+                  Tutor CMS
+                </Link>
+                <Link
+                  to="/tutor/inbox"
+                  onClick={() => setOpen(false)}
+                  className="py-2 text-sm font-medium"
+                >
+                  Tutor Inbox
+                </Link>
+              </>
             )}
             {isLoggedIn ? (
               <>

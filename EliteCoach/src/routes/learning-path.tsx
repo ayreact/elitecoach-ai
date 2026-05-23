@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { requireLearner } from "@/lib/auth-guard";
 import { useEffect, useState } from "react";
 import { TopNav } from "@/components/TopNav";
@@ -10,9 +10,11 @@ import {
     extractErrorMessage,
     normalizeUserType,
     unwrapApiData,
+    getLearningPath,
+    generateLearningPath,
 } from "@/lib/api-client";
 import { toast } from "sonner";
-import { Pencil, X, Check, Circle } from "lucide-react";
+import { Pencil, Check, Circle } from "lucide-react";
 
 interface PathStep {
     id?: string;
@@ -38,93 +40,27 @@ export const Route = createFileRoute("/learning-path")({
 
 function LearningPathPage() {
     const user = useAuthStore((s) => s.user);
+    const navigate = useNavigate();
     const [path, setPath] = useState<LearningPath | null>(null);
     const [loading, setLoading] = useState(true);
-    const [editing, setEditing] = useState(false);
-    const [goal, setGoal] = useState("");
-    const [hours, setHours] = useState(5);
-    const [generating, setGenerating] = useState(false);
 
-    const userId = user?.id ?? user?.userId;
+    const userId = user?.id ?? user?.userId ?? "learner";
 
     useEffect(() => {
         if (!userId) {
             setLoading(false);
             return;
         }
-        aiTutorApi
-            .get(`/api/v1/learning/paths/${userId}`)
-            .then((res) => {
-                const data = unwrapApiData<LearningPath | null>(res.data);
+        getLearningPath(userId)
+            .then((data) => {
                 setPath(data ?? null);
-                if (data?.goal) setGoal(data.goal);
-                if (data?.time_per_week) setHours(data.time_per_week);
             })
             .catch(() => setPath(null))
             .finally(() => setLoading(false));
     }, [userId]);
 
-    const generate = async () => {
-        if (!userId) return;
-        setGenerating(true);
-        try {
-            const targetRole =
-                goal || normalizeUserType(user?.userType) || "Career growth";
-            const res = await aiTutorApi.post(
-                "/api/v1/learning/paths/generate",
-                null,
-                {
-                    params: {
-                        target_role: targetRole,
-                        time_per_week: hours,
-                    },
-                }
-            );
-            const data = unwrapApiData<any>(res.data);
-            if (data) {
-                setPath({
-                    ...data,
-                    goal: data.target_role || targetRole,
-                    steps: data.steps || [],
-                });
-                toast.success("New learning path generated");
-            }
-        } catch (err) {
-            toast.error(extractErrorMessage(err, "Could not generate path"));
-        } finally {
-            setGenerating(false);
-        }
-    };
-
-    const saveGoal = async () => {
-        if (!userId) return;
-        try {
-            await Promise.all([
-                aiTutorApi.put(`/api/v1/learning/paths/${userId}`, {
-                    new_goal: goal,
-                    time_per_week: hours,
-                }),
-                acsApi
-                    .patch("/v1/assessment/profile", {
-                        career_goal: goal,
-                        weekly_time_hrs: hours,
-                    })
-                    .catch((err) => {
-                        console.warn("Could not sync profile to ACS", err);
-                    }),
-            ]);
-
-            setPath((p) => ({
-                ...(p ?? {}),
-                goal,
-                target_role: goal,
-                time_per_week: hours,
-            }));
-            setEditing(false);
-            toast.success("Goal updated");
-        } catch (err) {
-            toast.error(extractErrorMessage(err, "Could not update goal"));
-        }
+    const generate = () => {
+        navigate({ to: "/onboarding" });
     };
 
     const steps: PathStep[] = path?.steps ?? [];
@@ -151,17 +87,16 @@ function LearningPathPage() {
                     </div>
                     <div className="flex gap-3">
                         <button
-                            onClick={() => setEditing(true)}
+                            onClick={() => navigate({ to: "/onboarding" })}
                             className="h-11 px-4 border border-border inline-flex items-center gap-2 font-medium hover:bg-surface-card transition-colors"
                         >
                             <Pencil size={14} /> Edit goal
                         </button>
                         <button
                             onClick={generate}
-                            disabled={generating}
-                            className="h-11 px-4 bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors disabled:opacity-60"
+                            className="h-11 px-4 bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors"
                         >
-                            {generating ? "Generating..." : "Generate new path"}
+                            Generate new path
                         </button>
                     </div>
                 </div>
@@ -178,7 +113,7 @@ function LearningPathPage() {
                             tailored to your time and pace.
                         </p>
                         <button
-                            onClick={() => setEditing(true)}
+                            onClick={() => navigate({ to: "/onboarding" })}
                             className="h-11 px-5 bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors"
                         >
                             Set my goal
@@ -265,55 +200,6 @@ function LearningPathPage() {
                 )}
             </div>
 
-            {editing && (
-                <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-                    <div className="bg-surface-card w-full max-w-md p-8 rounded-lg relative">
-                        <button
-                            onClick={() => setEditing(false)}
-                            className="absolute top-4 right-4 text-text-secondary cursor-pointer hover:text-text-primary transition-colors"
-                        >
-                            <X size={20} />
-                        </button>
-                        <h2 className="text-xl font-bold mb-6">
-                            Edit your goal
-                        </h2>
-                        <div className="space-y-5">
-                            <div>
-                                <label className="label-caps text-text-secondary block mb-2">
-                                    Career goal
-                                </label>
-                                <input
-                                    value={goal}
-                                    onChange={(e) => setGoal(e.target.value)}
-                                    placeholder="e.g. Senior ML Engineer"
-                                    className="w-full h-12 px-4 border border-border focus:border-primary outline-none"
-                                />
-                            </div>
-                            <div>
-                                <label className="label-caps text-text-secondary block mb-2">
-                                    Hours per week
-                                </label>
-                                <input
-                                    type="number"
-                                    min={1}
-                                    max={40}
-                                    value={hours}
-                                    onChange={(e) =>
-                                        setHours(Number(e.target.value))
-                                    }
-                                    className="w-full h-12 px-4 border border-border focus:border-primary outline-none"
-                                />
-                            </div>
-                            <button
-                                onClick={saveGoal}
-                                className="w-full h-12 bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors"
-                            >
-                                Save changes
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             <Footer />
         </div>
