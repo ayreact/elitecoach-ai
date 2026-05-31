@@ -28,7 +28,7 @@ function RegisterPage() {
     email: "",
     password: "",
   });
-  const [userType, setUserType] = useState<"LEARNER" | "TUTOR" | "ORG_ADMIN">("LEARNER");
+  const [role, setRole] = useState<"solo_learner" | "enterprise_admin" | "tutor_author" | "tutor_responder">("solo_learner");
   const [loading, setLoading] = useState(false);
   const [agreeNdpr, setAgreeNdpr] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
@@ -42,8 +42,10 @@ function RegisterPage() {
     setLoading(true);
     try {
       await identityApi.post("/api/v1/auth/register", {
-        ...form,
-        userType: userType.toLowerCase(),
+        full_name: `${form.firstName} ${form.lastName}`.trim(),
+        email: form.email,
+        password: form.password,
+        role: role,
       });
       toast.success(
         "Account created. Check your email for a verification code.",
@@ -63,40 +65,20 @@ function RegisterPage() {
       subtitle="Free forever. No credit card required."
     >
       <form onSubmit={submit} className="space-y-5">
-        <div className="grid grid-cols-3 gap-3">
-          <button
-            type="button"
-            onClick={() => setUserType("LEARNER")}
-            className={`h-12 border font-medium transition-colors text-[13px] ${
-              userType === "LEARNER"
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border hover:border-primary"
-            }`}
+        <div>
+          <label className="label-caps text-text-secondary block mb-2">
+            Select Your Role
+          </label>
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value as any)}
+            className="w-full h-12 px-4 border border-border focus:border-primary outline-none bg-surface-card cursor-pointer transition-colors"
           >
-            I'm a Learner
-          </button>
-          <button
-            type="button"
-            onClick={() => setUserType("TUTOR")}
-            className={`h-12 border font-medium transition-colors text-[13px] ${
-              userType === "TUTOR"
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border hover:border-primary"
-            }`}
-          >
-            I'm a Tutor
-          </button>
-          <button
-            type="button"
-            onClick={() => setUserType("ORG_ADMIN")}
-            className={`h-12 border font-medium transition-colors text-[13px] ${
-              userType === "ORG_ADMIN"
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border hover:border-primary"
-            }`}
-          >
-            I'm an Admin
-          </button>
+            <option value="solo_learner">Solo Learner</option>
+            <option value="enterprise_admin">Enterprise Admin</option>
+            <option value="tutor_author">Tutor Author (CMS)</option>
+            <option value="tutor_responder">Tutor Responder (Inbox)</option>
+          </select>
         </div>
 
         <div className="grid grid-cols-2 gap-3">

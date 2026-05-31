@@ -7,7 +7,6 @@ import {
   extractErrorMessage,
   findNestedObject,
   findNestedString,
-  normalizeUserType,
 } from "@/lib/api-client";
 import { type AuthUser, useAuthStore, useOrgStore } from "@/lib/stores";
 import { toast } from "sonner";
@@ -44,15 +43,19 @@ function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [overrideRole, setOverrideRole] = useState<string>("");
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setErrors({});
     setLoading(true);
     try {
-      const res = await identityApi.post("/api/v1/auth/login", {
-        email,
-        password,
+      const params = new URLSearchParams();
+      params.append("username", email);
+      params.append("password", password);
+      
+      const res = await identityApi.post("/api/v1/auth/login", params, {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }
       });
       const payload =
         res.data && typeof res.data === "object"
@@ -125,15 +128,10 @@ function LoginPage() {
           pickString(rawUser.organizationId, rawUser.orgId, data.organizationId, data.orgId) ??
           findNestedString(payload, ["organizationId", "orgId"]) ??
           undefined,
-        userType: normalizeUserType(
-          rawUser.userType ??
-            rawUser.user_type ??
-            rawUser.persona ??
-            data.userType ??
-            data.user_type ??
-            data.persona ??
-            findNestedString(rawUser, ["userType", "user_type"]) ??
-            findNestedString(payload, ["userType", "user_type", "persona"]),
+        roles: overrideRole ? overrideRole.split(',') : (
+          Array.isArray(rawUser.roles) ? rawUser.roles :
+          Array.isArray(data.roles) ? data.roles :
+          []
         ),
       };
       if (!accessToken) throw new Error("No access token returned");
@@ -144,8 +142,13 @@ function LoginPage() {
       toast.success(
         `Welcome back${user.firstName ? ", " + user.firstName : ""}`,
       );
-      if (user.userType === "TUTOR") navigate({ to: "/tutor/courses" });
-      else if (user.userType === "ORG_ADMIN") {
+      const roles = user.roles ?? [];
+      if (roles.includes("tutor_author")) {
+        navigate({ to: "/tutor/courses" });
+      } else if (roles.includes("tutor_responder")) {
+        navigate({ to: "/tutor/inbox" });
+      }
+      else if (roles.includes("enterprise_admin")) {
         if (user.organizationId) {
           navigate({ to: "/org/$orgId/dashboard", params: { orgId: user.organizationId } });
         } else {
@@ -156,14 +159,19 @@ function LoginPage() {
     } catch (err) {
       console.error("[Login] Authentication failed:", err);
       const message = extractErrorMessage(err, "Login failed");
-      toast.error(message);
-      setErrors({
-        password: /invalid|unauthorized|credential|password|email/i.test(
-          message,
-        )
-          ? message
-          : "Login failed. Check the API response shape or your credentials.",
-      });
+      if (/verify/i.test(message)) {
+        toast.error("Please verify your email first.");
+        navigate({ to: "/verify-otp", search: { email } });
+      } else {
+        toast.error(message);
+        setErrors({
+          password: /invalid|unauthorized|credential|password|email/i.test(
+            message,
+          )
+            ? message
+            : "Login failed. Check the API response shape or your credentials.",
+        });
+      }
     } finally {
       setLoading(false);
     }
@@ -200,11 +208,40 @@ function LoginPage() {
             className="w-full h-12 px-4 border border-border focus:border-primary outline-none transition-colors"
             placeholder="••••••••"
           />
-          {errors.password && (
-            <p className="text-[13px] text-destructive mt-1">
-              {errors.password}
-            </p>
-          )}
+          <div className="flex justify-between items-center mt-2">
+            <div>
+              {errors.password && (
+                <p className="text-[13px] text-destructive">
+                  {errors.password}
+                </p>
+              )}
+            </div>
+            <Link
+              to="/forgot-password"
+              className="text-xs text-primary hover:underline font-medium"
+            >
+              Forgot password?
+            </Link>
+          </div>
+        </div>
+
+        <div>
+          <label className="label-caps text-text-secondary block mb-2">
+            Test Role Override (MVP Only)
+          </label>
+          <select
+            value={overrideRole}
+            onChange={(e) => setOverrideRole(e.target.value)}
+            className="w-full h-12 px-4 border border-border focus:border-primary outline-none transition-colors bg-surface-card cursor-pointer"
+          >
+            <option value="">Auto-detect from backend</option>
+            <option value="TUTOR">Force Tutor</option>
+            <option value="ORG_ADMIN">Force Org Admin</option>
+            <option value="LEARNER">Force Learner</option>
+          </select>
+          <p className="text-[11px] text-text-secondary mt-1">
+            Since the backend ignores roles on registration, use this to test different dashboards.
+          </p>
         </div>
 
         <button

@@ -4,7 +4,9 @@ import { useOrgStore } from "@/lib/stores";
 import { useEffect, useState } from "react";
 import { TopNav } from "@/components/TopNav";
 import { OrgTabs } from "@/components/OrgTabs";
-import { identityApi } from "@/lib/api-client";
+import { identityApi, contentApi } from "@/lib/api-client";
+import { Download, Filter, FileText, Table } from "lucide-react";
+import { toast } from "sonner";
 import {
   BarChart,
   Bar,
@@ -17,15 +19,23 @@ import {
 } from "recharts";
 
 interface OrgDashboard {
-  activeLearners?: number;
-  completionRate?: number;
-  averageScore?: number;
-  atRiskLearners?: number;
-  courseProgress?: {
-    courseId: string;
-    enrolledCount: number;
-    completionRate: number;
+  total_learners?: number;
+  pct_completed?: number;
+  avg_score?: number;
+  pct_at_risk?: number;
+  course_completion_rates?: {
+    course: string;
+    enrolled: number;
+    completed: number;
+    pct: number;
   }[];
+}
+
+interface FilterState {
+  team_id: string;
+  course_id: string;
+  start_date: string;
+  end_date: string;
 }
 
 export const Route = createFileRoute("/org/$orgId/dashboard")({
@@ -41,51 +51,171 @@ function OrgDashboardPage() {
   const { orgId } = Route.useParams();
   const [data, setData] = useState<OrgDashboard | null>(null);
   const [orgDetails, setOrgDetails] = useState<any | null>(null);
+  const [budget, setBudget] = useState<any | null>(null);
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [teams, setTeams] = useState<any[]>([]);
+  const [courses, setCourses] = useState<any[]>([]);
+  
+  const [filters, setFilters] = useState<FilterState>({
+    team_id: "",
+    course_id: "",
+    start_date: "",
+    end_date: ""
+  });
+  
+  const [brandForm, setBrandForm] = useState({ logo_url: "", primary_color: "#004B9E", org_name: "" });
+  const [savingBrand, setSavingBrand] = useState(false);
+
+  useEffect(() => {
+    if (orgDetails) {
+      setBrandForm({
+        logo_url: orgDetails.logo_url || "",
+        primary_color: orgDetails.primary_color || "#004B9E",
+        org_name: orgDetails.name || orgDetails.org_name || ""
+      });
+    }
+  }, [orgDetails]);
+
+  const handleSaveBranding = async () => {
+    setSavingBrand(true);
+    try {
+      await identityApi.patch('/api/v1/enterprise/branding', brandForm);
+      toast.success("Branding settings saved successfully");
+    } catch (e) {
+      toast.error("Failed to save branding settings");
+    } finally {
+      setSavingBrand(false);
+    }
+  };
+  
   const [loading, setLoading] = useState(true);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
   const [mounted, setMounted] = useState(false);
+
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    try {
+      const q = new URLSearchParams();
+      if (filters.team_id) q.append("team_id", filters.team_id);
+      if (filters.course_id) q.append("course_id", filters.course_id);
+      if (filters.start_date) q.append("from_date", filters.start_date);
+      if (filters.end_date) q.append("to_date", filters.end_date);
+      
+      const queryStr = q.toString() ? `?${q.toString()}` : "";
+
+      const dashRes = await identityApi.get(`/api/v1/enterprise/dashboard${queryStr}`);
+      setData(dashRes.data?.data ?? dashRes.data);
+    } catch (e) {
+      // toast.error("Failed to update dashboard data");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     setMounted(true);
+    
+    // Initial fetches that don't depend on filters
     Promise.all([
-      identityApi
-        .get(`/api/v1/organizations/${orgId}/dashboard`)
-        .then((res) => res.data?.data ?? res.data)
-        .catch(() => null),
-      identityApi
-        .get(`/api/v1/organizations/${orgId}`)
-        .then((res) => res.data?.data ?? res.data)
-        .catch(() => null),
-    ])
-      .then(([dashRes, orgRes]) => {
-        if (dashRes) setData(dashRes);
-        if (orgRes) setOrgDetails(orgRes);
-      })
-      .finally(() => setLoading(false));
+      identityApi.get(`/api/v1/enterprise/organizations`).catch(() => ({ data: null })), // usually org details endpoint
+      identityApi.get("/api/v1/enterprise/teams").catch(() => ({ data: [] })),
+      contentApi.get("/api/v1/courses/").catch(() => ({ data: [] })),
+      identityApi.get("/api/v1/enterprise/budget").catch(() => ({ data: null })),
+      identityApi.get("/api/v1/payments/invoices").catch(() => ({ data: [] }))
+    ]).then(([orgRes, tRes, cRes, bRes, iRes]) => {
+      // Mute errors since enterprise org detail endpoint might be different
+      setOrgDetails(orgRes.data?.data ?? orgRes.data);
+      setTeams(tRes.data?.data ?? tRes.data ?? []);
+      setCourses(cRes.data?.data ?? cRes.data ?? []);
+      setBudget(bRes.data?.data ?? bRes.data);
+      setInvoices(iRes.data?.data ?? iRes.data ?? []);
+    });
   }, [orgId]);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [orgId, filters.team_id, filters.course_id, filters.start_date, filters.end_date]);
+
+  const handleExport = async (format: "pdf" | "excel") => {
+    if (format === "pdf") setExportingPdf(true);
+    else setExportingExcel(true);
+    
+    try {
+      const q = new URLSearchParams();
+      q.append("format", format);
+      if (filters.team_id) q.append("team_id", filters.team_id);
+      if (filters.course_id) q.append("course_id", filters.course_id);
+      if (filters.start_date) q.append("from_date", filters.start_date);
+      if (filters.end_date) q.append("to_date", filters.end_date);
+
+      // Download file directly
+      const response = await identityApi.get(`/api/v1/enterprise/reports/export?${q.toString()}`, {
+        responseType: 'blob'
+      });
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `enterprise_report_${new Date().toISOString().split('T')[0]}.${format === 'excel' ? 'xlsx' : 'pdf'}`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      toast.success(`${format.toUpperCase()} report exported successfully`);
+    } catch (e) {
+      toast.error(`Failed to export ${format.toUpperCase()} report`);
+    } finally {
+      if (format === "pdf") setExportingPdf(false);
+      else setExportingExcel(false);
+    }
+  };
+
+  const handleDownloadInvoice = async (invoiceId: string) => {
+    try {
+      const response = await identityApi.get(`/api/v1/payments/invoices/${invoiceId}/pdf`, {
+        responseType: 'blob'
+      });
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `invoice_${invoiceId}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      toast.success("Invoice downloaded successfully");
+    } catch (e) {
+      toast.error("Failed to download invoice");
+    }
+  };
 
   const stats = [
     {
       label: "Active learners",
-      value: data?.activeLearners ?? orgDetails?.activeLearnersCount ?? "—",
+      value: data?.total_learners ?? orgDetails?.activeLearnersCount ?? "—",
       accent: "bg-navy",
     },
     {
       label: "Completion rate",
-      value: data?.completionRate != null 
-        ? `${Math.round(data.completionRate <= 1 ? data.completionRate * 100 : data.completionRate)}%` 
+      value: data?.pct_completed != null 
+        ? `${Math.round(data.pct_completed <= 1 ? data.pct_completed * 100 : data.pct_completed)}%` 
         : "—",
       accent: "bg-coral",
     },
     {
       label: "Avg score",
-      value: data?.averageScore != null 
-        ? `${Math.round(data.averageScore <= 1 ? data.averageScore * 100 : data.averageScore)}%` 
+      value: data?.avg_score != null 
+        ? `${Math.round(data.avg_score <= 1 ? data.avg_score * 100 : data.avg_score)}%` 
         : "—",
       accent: "bg-success",
     },
     {
       label: "At-risk learners",
-      value: data?.atRiskLearners ?? "—",
+      value: data?.pct_at_risk != null ? `${Math.round(data.pct_at_risk <= 1 ? data.pct_at_risk * 100 : data.pct_at_risk)}%` : "—",
       accent: "bg-destructive",
     },
   ];
@@ -102,14 +232,81 @@ function OrgDashboardPage() {
             </span>
             <h1 className="text-4xl font-bold tracking-tight">Overview</h1>
           </div>
-          <div className="flex gap-2">
-            <span className="px-3 py-1.5 bg-primary/10 text-primary border border-primary/20 text-xs font-mono font-bold capitalize rounded-sm">
-              Plan: {orgDetails?.planTier?.replace(/_/g, " ") || "Enterprise"}
-            </span>
-            <span className="px-3 py-1.5 bg-success/10 text-success border border-success/20 text-xs font-mono font-bold rounded-sm">
-              Quota: {orgDetails?.activeLearnersCount ?? 0} / {orgDetails?.maxLearners ?? 100} learners
-            </span>
+          <div className="flex gap-3">
+            <button
+              onClick={() => handleExport("excel")}
+              disabled={exportingExcel}
+              className="h-10 px-4 bg-surface-card border border-border text-text-primary text-sm font-medium inline-flex items-center gap-2 hover:border-primary transition-colors disabled:opacity-50"
+            >
+              <Table size={16} /> {exportingExcel ? "Exporting..." : "Excel Report"}
+            </button>
+            <button
+              onClick={() => handleExport("pdf")}
+              disabled={exportingPdf}
+              className="h-10 px-4 bg-primary text-primary-foreground text-sm font-medium inline-flex items-center gap-2 hover:bg-primary-hover transition-colors disabled:opacity-50"
+            >
+              <FileText size={16} /> {exportingPdf ? "Exporting..." : "PDF Report"}
+            </button>
           </div>
+        </div>
+
+        {/* Filters Section */}
+        <div className="card-base p-4 mb-8 bg-surface-card border border-border flex flex-wrap gap-4 items-end">
+          <div className="flex items-center gap-2 text-text-secondary w-full md:w-auto">
+            <Filter size={18} />
+            <span className="font-semibold text-sm">Filters:</span>
+          </div>
+          
+          <div className="flex-1 min-w-[150px]">
+            <label className="text-xs font-bold text-text-secondary mb-1 block">Team</label>
+            <select 
+              className="w-full text-sm p-2 border border-border bg-surface rounded-sm focus:border-primary outline-none"
+              value={filters.team_id}
+              onChange={(e) => setFilters(f => ({ ...f, team_id: e.target.value }))}
+            >
+              <option value="">All Teams</option>
+              {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+
+          <div className="flex-1 min-w-[150px]">
+            <label className="text-xs font-bold text-text-secondary mb-1 block">Course</label>
+            <select 
+              className="w-full text-sm p-2 border border-border bg-surface rounded-sm focus:border-primary outline-none"
+              value={filters.course_id}
+              onChange={(e) => setFilters(f => ({ ...f, course_id: e.target.value }))}
+            >
+              <option value="">All Courses</option>
+              {courses.map(c => <option key={c.id} value={c.id}>{c.title || c.id}</option>)}
+            </select>
+          </div>
+
+          <div className="flex-1 min-w-[130px]">
+            <label className="text-xs font-bold text-text-secondary mb-1 block">Start Date</label>
+            <input 
+              type="date"
+              className="w-full text-sm p-2 border border-border bg-surface rounded-sm focus:border-primary outline-none"
+              value={filters.start_date}
+              onChange={(e) => setFilters(f => ({ ...f, start_date: e.target.value }))}
+            />
+          </div>
+
+          <div className="flex-1 min-w-[130px]">
+            <label className="text-xs font-bold text-text-secondary mb-1 block">End Date</label>
+            <input 
+              type="date"
+              className="w-full text-sm p-2 border border-border bg-surface rounded-sm focus:border-primary outline-none"
+              value={filters.end_date}
+              onChange={(e) => setFilters(f => ({ ...f, end_date: e.target.value }))}
+            />
+          </div>
+          
+          <button 
+            onClick={() => setFilters({ team_id: "", course_id: "", start_date: "", end_date: "" })}
+            className="text-xs font-bold text-primary hover:underline pb-2 px-2"
+          >
+            Clear
+          </button>
         </div>
 
         {loading ? (
@@ -144,14 +341,14 @@ function OrgDashboardPage() {
             {/* Visual Recharts Progress Chart */}
             <div className="card-base">
               <h3 className="font-semibold mb-4">Learner Course Enrolments & Completion</h3>
-              {mounted && data?.courseProgress && data.courseProgress.length > 0 ? (
+              {mounted && data?.course_completion_rates && data.course_completion_rates.length > 0 ? (
                 <div className="h-72 w-full mt-6">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
-                      data={data.courseProgress.map(c => ({
-                        course: `Course ${c.courseId.slice(0, 5)}...`,
-                        enrolled: c.enrolledCount,
-                        completion: Math.round(c.completionRate <= 1 ? c.completionRate * 100 : c.completionRate)
+                      data={data.course_completion_rates.map(c => ({
+                        course: c.course || "Unknown Course",
+                        enrolled: c.enrolled,
+                        completion: Math.round(c.pct <= 1 ? c.pct * 100 : c.pct)
                       }))}
                       margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
                     >
@@ -178,7 +375,7 @@ function OrgDashboardPage() {
               <div className="px-6 py-4 border-b border-border">
                 <h3 className="font-semibold">Course Progress List</h3>
               </div>
-              {!data?.courseProgress || data.courseProgress.length === 0 ? (
+              {!data?.course_completion_rates || data.course_completion_rates.length === 0 ? (
                 <div className="p-8 text-center text-text-secondary text-sm">
                   No course data yet.
                 </div>
@@ -186,20 +383,21 @@ function OrgDashboardPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-surface">
                     <tr className="text-left">
-                      <th className="px-6 py-3 label-caps text-text-secondary">Course ID</th>
+                      <th className="px-6 py-3 label-caps text-text-secondary">Course</th>
                       <th className="px-6 py-3 label-caps text-text-secondary">Enrolled</th>
                       <th className="px-6 py-3 label-caps text-text-secondary">Completion</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.courseProgress.map((row) => {
-                      const compRate = Math.round(row.completionRate <= 1 ? row.completionRate * 100 : row.completionRate);
+                    {data.course_completion_rates.map((row, idx) => {
+                      const compRate = Math.round(row.pct <= 1 ? row.pct * 100 : row.pct);
+                      const courseTitle = row.course || `Course ${idx + 1}`;
                       return (
-                        <tr key={row.courseId} className="border-t border-border">
-                          <td className="px-6 py-4 font-mono text-xs truncate max-w-[150px]">
-                            {row.courseId}
+                        <tr key={idx} className="border-t border-border">
+                          <td className="px-6 py-4 font-medium text-sm truncate max-w-[200px]" title={courseTitle}>
+                            {courseTitle}
                           </td>
-                          <td className="px-6 py-4">{row.enrolledCount}</td>
+                          <td className="px-6 py-4">{row.enrolled}</td>
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
                               <div className="flex-1 h-1 bg-border rounded-sm overflow-hidden max-w-xs">
@@ -225,29 +423,37 @@ function OrgDashboardPage() {
           {/* Right Column: Billing, Subscription details & Invoice Ledger */}
           <div className="space-y-6">
             <div className="card-base bg-white border border-border">
-              <h3 className="font-bold mb-1">Billing Overview</h3>
-              <p className="text-sm text-text-secondary mb-4">Manage your corporate billing profile.</p>
+              <h3 className="font-bold mb-1">Billing & Budget</h3>
+              <p className="text-sm text-text-secondary mb-4">Manage your corporate training spend.</p>
               
               <div className="space-y-4 text-sm">
                 <div className="flex justify-between border-b border-border pb-2.5">
                   <span className="text-text-secondary">Billing Status:</span>
-                  <span className="font-bold text-success">Active</span>
+                  <span className="font-bold text-success">{budget?.status || "Active"}</span>
                 </div>
                 <div className="flex justify-between border-b border-border pb-2.5">
-                  <span className="text-text-secondary">Current Plan:</span>
-                  <span className="font-bold uppercase text-primary">{orgDetails?.planTier?.replace(/_/g, " ") || "ENTERPRISE PRO"}</span>
+                  <span className="text-text-secondary">Total Budget:</span>
+                  <span className="font-bold text-primary">
+                    {budget?.currency || "₦"}{(budget?.budget_ngn ?? 0).toLocaleString()}
+                  </span>
                 </div>
                 <div className="flex justify-between border-b border-border pb-2.5">
-                  <span className="text-text-secondary">Billing Period:</span>
-                  <span className="text-text-primary">Monthly</span>
+                  <span className="text-text-secondary">Spend per Learner:</span>
+                  <span className="text-text-primary">
+                    {budget?.currency || "₦"}{(budget?.spend_per_learner ?? 0).toLocaleString()}
+                  </span>
                 </div>
                 <div className="flex justify-between border-b border-border pb-2.5">
-                  <span className="text-text-secondary">Quota:</span>
-                  <span className="text-text-primary">{orgDetails?.activeLearnersCount ?? 0} / {orgDetails?.maxLearners ?? 100} Learners</span>
+                  <span className="text-text-secondary">Remaining Balance:</span>
+                  <span className="text-text-primary">
+                    {budget?.currency || "₦"}{(budget?.remaining_ngn ?? 0).toLocaleString()}
+                  </span>
                 </div>
                 <div className="flex justify-between pt-1">
                   <span className="text-text-secondary">Next Invoice:</span>
-                  <span className="font-mono text-xs text-text-primary">June 23, 2026</span>
+                  <span className="font-mono text-xs text-text-primary">
+                    {budget?.next_invoice_date ? new Date(budget.next_invoice_date).toLocaleDateString() : "—"}
+                  </span>
                 </div>
               </div>
             </div>
@@ -257,25 +463,84 @@ function OrgDashboardPage() {
                 <h3 className="font-bold">Invoice History</h3>
               </div>
               <div className="divide-y divide-border text-sm">
-                {[
-                  { id: "INV-2026-004", date: "May 23, 2026", amount: "₦250,000", status: "Paid" },
-                  { id: "INV-2026-003", date: "Apr 23, 2026", amount: "₦250,000", status: "Paid" },
-                  { id: "INV-2026-002", date: "Mar 23, 2026", amount: "₦250,000", status: "Paid" },
-                  { id: "INV-2026-001", date: "Feb 23, 2026", amount: "₦150,000", status: "Paid" },
-                ].map((inv) => (
-                  <div key={inv.id} className="p-4 flex items-center justify-between">
+                {invoices.length === 0 ? (
+                  <div className="p-8 text-center text-text-secondary text-sm">
+                    No payment history found.
+                  </div>
+                ) : invoices.map((inv: any) => (
+                  <div key={inv.id || inv.reference} className="p-4 flex items-center justify-between hover:bg-navy/[0.02] transition-colors">
                     <div>
-                      <div className="font-mono text-xs font-bold text-text-primary">{inv.id}</div>
-                      <div className="text-xs text-text-secondary mt-0.5">{inv.date}</div>
+                      <div className="font-mono text-xs font-bold text-text-primary">{inv.id || inv.reference}</div>
+                      <div className="text-xs text-text-secondary mt-0.5">{new Date(inv.date || inv.created_at).toLocaleDateString()}</div>
                     </div>
-                    <div className="text-right">
-                      <div className="font-semibold text-text-primary">{inv.amount}</div>
-                      <span className="inline-block text-[10px] bg-success/15 text-success px-1.5 py-0.5 rounded-sm font-bold mt-1">
-                        {inv.status}
-                      </span>
+                    <div className="flex items-center gap-4 text-right">
+                      <div>
+                        <div className="font-semibold text-text-primary">{inv.currency || "₦"}{inv.amount?.toLocaleString()}</div>
+                        <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded-sm font-bold mt-1 ${inv.status?.toLowerCase() === 'paid' ? 'bg-success/15 text-success' : 'bg-primary/15 text-primary'}`}>
+                          {inv.status || "Paid"}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleDownloadInvoice(inv.id || inv.reference)}
+                        className="p-1.5 text-text-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors"
+                        title="Download Invoice"
+                      >
+                        <Download size={16} />
+                      </button>
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            <div className="card-base bg-white border border-border mt-6">
+              <h3 className="font-bold mb-1">Branding & Settings</h3>
+              <p className="text-sm text-text-secondary mb-4">Customise your portal appearance.</p>
+              
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-bold text-text-secondary mb-1 block">Organisation Name</label>
+                  <input 
+                    type="text" 
+                    className="w-full text-sm p-2 border border-border bg-surface rounded-sm focus:border-primary outline-none" 
+                    value={brandForm.org_name}
+                    onChange={(e) => setBrandForm(f => ({...f, org_name: e.target.value}))}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-text-secondary mb-1 block">Logo URL</label>
+                  <input 
+                    type="text" 
+                    className="w-full text-sm p-2 border border-border bg-surface rounded-sm focus:border-primary outline-none" 
+                    value={brandForm.logo_url}
+                    placeholder="https://example.com/logo.png"
+                    onChange={(e) => setBrandForm(f => ({...f, logo_url: e.target.value}))}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-text-secondary mb-1 block">Primary Color</label>
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="color" 
+                      className="w-10 h-10 p-1 border border-border rounded-sm cursor-pointer" 
+                      value={brandForm.primary_color}
+                      onChange={(e) => setBrandForm(f => ({...f, primary_color: e.target.value}))}
+                    />
+                    <input 
+                      type="text" 
+                      className="flex-1 text-sm p-2 border border-border bg-surface rounded-sm focus:border-primary outline-none" 
+                      value={brandForm.primary_color}
+                      onChange={(e) => setBrandForm(f => ({...f, primary_color: e.target.value}))}
+                    />
+                  </div>
+                </div>
+                <button 
+                  onClick={handleSaveBranding}
+                  disabled={savingBrand}
+                  className="w-full h-10 mt-2 bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors rounded-sm disabled:opacity-60 text-sm"
+                >
+                  {savingBrand ? "Saving..." : "Save Branding"}
+                </button>
               </div>
             </div>
           </div>
@@ -284,4 +549,3 @@ function OrgDashboardPage() {
     </div>
   );
 }
-

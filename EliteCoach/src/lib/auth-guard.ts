@@ -15,11 +15,18 @@ export function requireLearner() {
   if (!isLoggedIn) {
     throw redirect({ to: "/login" });
   }
-  if (user?.userType === "TUTOR") {
-    throw redirect({ to: "/tutor/courses" });
+  const roles = user?.roles ?? [];
+  const isTutor = roles.includes("tutor_author") || roles.includes("tutor_responder") || (user as any)?.userType === "TUTOR";
+  const isOrgAdmin = roles.includes("enterprise_admin") || (user as any)?.userType === "ORG_ADMIN";
+  if (isTutor) {
+    if (roles.includes("tutor_author")) {
+      throw redirect({ to: "/tutor/courses" });
+    } else {
+      throw redirect({ to: "/tutor/inbox" });
+    }
   }
-  if (user?.userType === "ORG_ADMIN") {
-    const orgId = String((user as any).organizationId ?? "unknown");
+  if (isOrgAdmin) {
+    const orgId = String(user?.organizationId ?? "unknown");
     throw redirect({ to: "/org/$orgId/dashboard", params: { orgId } });
   }
   // Treat undefined/null/empty userType as LEARNER (the default role)
@@ -31,18 +38,19 @@ export function requireTutor() {
   if (!isLoggedIn) {
     throw redirect({ to: "/login" });
   }
-  if (user?.userType === "LEARNER") {
+  const roles = user?.roles ?? [];
+  const isTutor = roles.includes("tutor_author") || roles.includes("tutor_responder") || (user as any)?.userType === "TUTOR";
+  if (!isTutor) {
     throw redirect({ to: "/dashboard" });
-  }
-  if (user?.userType !== "TUTOR") {
-    throw redirect({ to: "/login" });
   }
 }
 
 /** Throws a redirect to /login if the user is not an ORG_ADMIN. */
 export function requireOrgAdmin() {
   const { isLoggedIn, user } = useAuthStore.getState();
-  if (!isLoggedIn || user?.userType !== "ORG_ADMIN") {
+  const roles = user?.roles ?? [];
+  const isOrgAdmin = roles.includes("enterprise_admin") || (user as any)?.userType === "ORG_ADMIN";
+  if (!isLoggedIn || !isOrgAdmin) {
     throw redirect({ to: "/login" });
   }
 }
@@ -50,8 +58,16 @@ export function requireOrgAdmin() {
 /** Throws a redirect to /tutor/courses if the user is a TUTOR. */
 export function redirectIfTutor() {
   const { isLoggedIn, user } = useAuthStore.getState();
-  if (isLoggedIn && user?.userType === "TUTOR") {
-    throw redirect({ to: "/tutor/courses" });
+  if (isLoggedIn) {
+    const roles = user?.roles ?? [];
+    const isTutor = roles.includes("tutor_author") || roles.includes("tutor_responder") || (user as any)?.userType === "TUTOR";
+    if (isTutor) {
+      if (roles.includes("tutor_author")) {
+        throw redirect({ to: "/tutor/courses" });
+      } else {
+        throw redirect({ to: "/tutor/inbox" });
+      }
+    }
   }
 }
 
@@ -59,6 +75,20 @@ export function redirectIfTutor() {
 export function redirectIfLoggedIn() {
   const { isLoggedIn, user } = useAuthStore.getState();
   if (isLoggedIn) {
-    throw redirect({ to: user?.userType === "TUTOR" ? "/tutor/courses" : "/dashboard" });
+    const roles = user?.roles ?? [];
+    const isTutor = roles.includes("tutor_author") || roles.includes("tutor_responder") || (user as any)?.userType === "TUTOR";
+    const isOrgAdmin = roles.includes("enterprise_admin") || (user as any)?.userType === "ORG_ADMIN";
+    if (isTutor) {
+      if (roles.includes("tutor_author")) {
+        throw redirect({ to: "/tutor/courses" });
+      } else {
+        throw redirect({ to: "/tutor/inbox" });
+      }
+    } else if (isOrgAdmin) {
+      const orgId = String(user?.organizationId ?? "unknown");
+      throw redirect({ to: "/org/$orgId/dashboard", params: { orgId } });
+    } else {
+      throw redirect({ to: "/dashboard" });
+    }
   }
 }

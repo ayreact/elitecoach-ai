@@ -10,6 +10,10 @@ import {
   extractErrorMessage,
   unwrapApiData,
   unwrapApiList,
+  subscribeToPlan,
+  getPaymentStatus,
+  downloadCertificate,
+  getLinkedInShareUrl,
 } from "@/lib/api-client";
 import { type AuthUser, useAuthStore } from "@/lib/stores";
 import { toast } from "sonner";
@@ -29,10 +33,8 @@ function ProfilePage() {
     email: user?.email ?? "",
   });
   const [prefs, setPrefs] = useState({ email: true, in_app: true });
-  const [saving, setSaving] = useState(false);
-  const profileEditingSupported = false;
+
   const [certs, setCerts] = useState<any[]>([]);
-  const [skillGap, setSkillGap] = useState<any>(null);
   const [subscriptionStatus, setSubscriptionStatus] = useState("free");
 
   useEffect(() => {
@@ -43,72 +45,71 @@ function ProfilePage() {
       setSubscriptionStatus("premium");
     }
 
-    const script = document.createElement("script");
-    script.src = "https://js.paystack.co/v1/inline.js";
-    script.async = true;
-    document.body.appendChild(script);
-
-    return () => {
-      try {
-        document.body.removeChild(script);
-      } catch (e) {}
-    };
+    // Try to get real status from backend
+    getPaymentStatus().then(res => {
+      if (res && res.status === "active") {
+        setSubscriptionStatus("premium");
+        localStorage.setItem(`elitecoach.subscription.${userId}`, "premium");
+      }
+    }).catch(() => {});
   }, [user]);
 
-  const handlePaystackPayment = () => {
-    if (!(window as any).PaystackPop) {
-      toast.error("Paystack SDK not loaded yet. Please wait a moment.");
-      return;
-    }
-    
-    const handler = (window as any).PaystackPop.setup({
-      key: "pk_test_d3a5a7698544bd0db514ea40f6087b3a763806ba",
-      email: form.email || user?.email || "learner@elitecoach.ai",
-      amount: 10000 * 100, // 10,000 NGN in kobo
-      currency: "NGN",
-      callback: function(response: any) {
-        toast.success("Upgrade successful! You are now an EliteCoach Premium member.");
-        const userId = user?.id ?? user?.userId ?? "learner";
-        localStorage.setItem(`elitecoach.subscription.${userId}`, "premium");
-        setSubscriptionStatus("premium");
-
-        // send notification email/WhatsApp
-        try {
-          notificationsApi.post(
-            "/api/v1/notification/send",
-            {
-              channel: "email",
-              to: form.email || user?.email,
-              subject: "Premium Membership Activated — EliteCoach",
-              body: `Hello ${form.firstName || "Learner"},\n\nYour Premium subscription has been successfully activated. Transaction Reference: ${response.reference}.\n\nStart learning with unlimited AI Tutoring and verified certificates now!`
-            }
-          ).catch(() => {});
-        } catch (e) {}
-      },
-      onClose: function() {
-        toast.info("Payment checkout cancelled.");
+  const handlePaystackPayment = async () => {
+    try {
+      const res = await subscribeToPlan("monthly");
+      if (res && res.authorization_url) {
+        window.location.href = res.authorization_url;
+      } else {
+        toast.error("Failed to generate payment link.");
       }
-    });
-    handler.openIframe();
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Subscription initialization failed."));
+    }
   };
 
   useEffect(() => {
-    Promise.all([
-      acsApi.get("/v1/assessment/certificates/").catch(() => ({ data: [] })),
-      acsApi.get("/v1/assessment/stats/skill-gap").catch(() => ({ data: null })),
-    ]).then(([certRes, gapRes]) => {
-      const certList = unwrapApiList(certRes.data);
+    acsApi.get("/api/v1/certificates/me").then((res) => {
+      const certList = unwrapApiList(res.data);
       setCerts(certList);
-      const gapData = unwrapApiData(gapRes.data);
-      setSkillGap(gapData);
     }).catch((err) => {
       console.warn("Could not load profile data", err);
     });
   }, []);
 
+  const handleDownloadCert = async (cert: any) => {
+    try {
+      const url = await downloadCertificate(cert.id);
+      if (url) {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `Certificate_${cert.verification_code || cert.id}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else if (cert.pdf_url) {
+        window.open(cert.pdf_url, "_blank");
+      }
+    } catch (e) {
+      if (cert.pdf_url) window.open(cert.pdf_url, "_blank");
+    }
+  };
+
+  const handleShareCert = async (cert: any) => {
+    try {
+      const url = await getLinkedInShareUrl(cert.id);
+      if (url) {
+        window.open(url, "_blank", "noopener,noreferrer");
+      } else if (cert.linkedin_share_url) {
+        window.open(cert.linkedin_share_url, "_blank", "noopener,noreferrer");
+      }
+    } catch (e) {
+      if (cert.linkedin_share_url) window.open(cert.linkedin_share_url, "_blank", "noopener,noreferrer");
+    }
+  };
+
   useEffect(() => {
     identityApi
-      .get("/api/v1/users/profile")
+      .get("/api/v1/auth/me")
       .then((res) => {
         const data = unwrapApiData<Record<string, unknown> | null>(res.data);
         if (data) {
@@ -124,7 +125,7 @@ function ProfilePage() {
             email:
               typeof data.email === "string" ? data.email : (user?.email ?? ""),
           });
-          if (data.userType || data.id) {
+          if (Array.isArray(data.roles) || data.id) {
             const nextUser: AuthUser = {
               ...(user ?? {
                 email:
@@ -142,10 +143,10 @@ function ProfilePage() {
                 typeof data.lastName === "string"
                   ? data.lastName
                   : user?.lastName,
-              userType:
-                typeof data.userType === "string"
-                  ? data.userType
-                  : user?.userType,
+              roles:
+                Array.isArray(data.roles)
+                  ? data.roles
+                  : user?.roles,
               id: typeof data.id === "string" ? data.id : user?.id,
             };
             setUser(nextUser);
@@ -162,42 +163,16 @@ function ProfilePage() {
       });
   }, [setUser, user]);
 
-  const save = async () => {
-    if (!profileEditingSupported) {
-      toast.error("Profile editing is not available from the backend yet.");
-      return;
-    }
-    setSaving(true);
-    try {
-      await identityApi.put("/api/v1/users/profile", form);
-      toast.success("Profile updated");
-      if (user) setUser({ ...user, ...form });
-    } catch (err) {
-      toast.error(extractErrorMessage(err, "Could not save profile"));
-    } finally {
-      setSaving(false);
-    }
-  };
 
-  const togglePref = async (k: "email" | "in_app", v: boolean) => {
-    const nextPrefs = { ...prefs, [k]: v };
-    setPrefs(nextPrefs);
-    try {
-      await notificationsApi.post(
-        "/api/v1/notification/preferences",
-        JSON.stringify(nextPrefs),
-      );
-      toast.success("Preferences saved");
-    } catch {
-      // silent
-    }
-  };
+
+
 
   const initials =
     `${form.firstName?.[0] ?? ""}${form.lastName?.[0] ?? ""}`.toUpperCase() ||
     "U";
 
-  const isTutor = user?.userType === "TUTOR";
+  const roles = user?.roles ?? [];
+  const isTutor = roles.includes("tutor_author") || roles.includes("tutor_responder");
 
   return (
     <div className="min-h-screen flex flex-col bg-surface">
@@ -222,7 +197,7 @@ function ProfilePage() {
             </h2>
             <p className="text-sm text-text-secondary mt-1">{form.email}</p>
             <span className="label-caps inline-block mt-4 px-3 py-1 bg-surface text-text-secondary rounded-sm">
-              {user?.userType ?? "Learner"}
+              {user?.roles && user.roles.length > 0 ? user.roles.join(', ') : "Learner"}
             </span>
           </aside>
 
@@ -232,13 +207,11 @@ function ProfilePage() {
               <p className="text-sm text-text-secondary mb-6">
                 Update your name and contact info.
               </p>
-              {!profileEditingSupported && (
-                <div className="mb-4 rounded-sm border border-border bg-surface px-4 py-3 text-sm text-text-secondary">
-                  Profile editing is not available yet. You can view your
-                  profile data here, but updates are disabled until the backend
-                  exposes a write endpoint.
-                </div>
-              )}
+              <div className="mb-4 rounded-sm border border-border bg-surface px-4 py-3 text-sm text-text-secondary">
+                Profile editing is not available yet. You can view your
+                profile data here, but updates are disabled until the backend
+                exposes a write endpoint.
+              </div>
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <label className="label-caps text-text-secondary block mb-2">
@@ -249,7 +222,7 @@ function ProfilePage() {
                     onChange={(e) =>
                       setForm({ ...form, firstName: e.target.value })
                     }
-                    disabled={!profileEditingSupported}
+                    disabled={true}
                     className="w-full h-12 px-4 border border-border focus:border-primary outline-none"
                   />
                 </div>
@@ -262,7 +235,7 @@ function ProfilePage() {
                     onChange={(e) =>
                       setForm({ ...form, lastName: e.target.value })
                     }
-                    disabled={!profileEditingSupported}
+                    disabled={true}
                     className="w-full h-12 px-4 border border-border focus:border-primary outline-none"
                   />
                 </div>
@@ -277,17 +250,7 @@ function ProfilePage() {
                   />
                 </div>
               </div>
-              <button
-                onClick={save}
-                disabled={saving || !profileEditingSupported}
-                className="mt-6 h-11 px-5 bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors disabled:opacity-60"
-              >
-                {profileEditingSupported
-                  ? saving
-                    ? "Saving..."
-                    : "Save changes"
-                  : "Editing unavailable"}
-              </button>
+
             </div>
 
             {!isTutor && (
@@ -342,38 +305,7 @@ function ProfilePage() {
               </div>
             )}
 
-            {!isTutor && (
-              <div className="card-base">
-                <h3 className="font-semibold mb-1">Skill Gap Analysis</h3>
-                <p className="text-sm text-text-secondary mb-6">
-                  Your progress towards your career goal.
-                </p>
-                {skillGap ? (
-                  <div className="space-y-4">
-                    <p><strong>Career Goal:</strong> {skillGap.career_goal || "Not set"}</p>
-                    <p><strong>Learning Velocity:</strong> {skillGap.learning_velocity || 0} points/week</p>
-                    <div>
-                      <p className="font-medium mb-2">Skill Gaps:</p>
-                      {Object.keys(skillGap.skill_gap_analysis || {}).length > 0 ? (
-                        <div className="grid gap-2">
-                          {Object.entries(skillGap.skill_gap_analysis).map(([skill, gap]: [string, any]) => (
-                            <div key={skill} className="flex justify-between items-center p-2 bg-surface rounded-sm">
-                              <span className="text-sm">{skill}</span>
-                              <span className="text-sm font-mono">{gap} gap</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-text-secondary">No skill gaps analyzed yet.</p>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-sm text-text-secondary">Loading skill gap data...</p>
-                )}
-              </div>
-            )}
-            
+
             {!isTutor && (
               <div className="card-base">
                 <h3 className="font-semibold mb-1">My Certificates</h3>
@@ -393,16 +325,12 @@ function ProfilePage() {
                            <p className="text-xs text-text-secondary">Issued: {new Date(cert.issued_at).toLocaleDateString()} &bull; ID: {cert.verification_code}</p>
                         </div>
                         <div className="mt-3 md:mt-0 flex gap-2">
-                           {cert.pdf_url && (
-                             <a href={cert.pdf_url} target="_blank" rel="noreferrer" className="text-sm font-medium text-primary hover:underline px-3 py-1.5 bg-primary/10 rounded-sm">
-                               Download PDF
-                             </a>
-                           )}
-                           {cert.linkedin_share_url && (
-                              <a href={cert.linkedin_share_url} target="_blank" rel="noreferrer" className="text-sm font-medium text-[#0077b5] hover:underline px-3 py-1.5 border border-[#0077b5] rounded-sm">
-                                Share on LinkedIn
-                              </a>
-                           )}
+                           <button onClick={() => handleDownloadCert(cert)} className="text-sm font-medium text-primary hover:underline px-3 py-1.5 bg-primary/10 rounded-sm cursor-pointer">
+                             Download PDF
+                           </button>
+                           <button onClick={() => handleShareCert(cert)} className="text-sm font-medium text-[#0077b5] hover:underline px-3 py-1.5 border border-[#0077b5] rounded-sm cursor-pointer">
+                             Share on LinkedIn
+                           </button>
                         </div>
                       </div>
                     ))}
@@ -411,40 +339,7 @@ function ProfilePage() {
               </div>
             )}
             
-            <div className="card-base">
-              <h3 className="font-semibold mb-1">Notifications</h3>
-              <p className="text-sm text-text-secondary mb-6">
-                Choose how you want to hear from EliteCoach.
-              </p>
-              <div className="space-y-4">
-                {(
-                  [
-                    { key: "email", label: "Email notifications" },
-                    { key: "in_app", label: "In-app notifications" },
-                  ] as const
-                ).map((row) => (
-                  <div
-                    key={row.key}
-                    className="flex items-center justify-between py-3 border-b border-border last:border-b-0"
-                  >
-                    <span className="text-sm font-medium">{row.label}</span>
-                    <button
-                      onClick={() => togglePref(row.key, !prefs[row.key])}
-                      className={`relative w-12 h-6 rounded-full transition-colors ${
-                        prefs[row.key] ? "bg-primary" : "bg-border"
-                      }`}
-                      aria-pressed={prefs[row.key]}
-                    >
-                      <span
-                        className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
-                          prefs[row.key] ? "translate-x-6" : ""
-                        }`}
-                      />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
+
           </div>
         </div>
       </div>

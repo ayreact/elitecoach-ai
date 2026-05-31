@@ -66,7 +66,7 @@ function CatalogPage() {
                 }
 
                 const queryString = params.toString();
-                const url = `/courses/${queryString ? `?${queryString}` : ""}`;
+                const url = `/api/v1/courses/${queryString ? `?${queryString}` : ""}`;
 
                 console.log("Fetching courses from URL:", url);
                 const res = await contentApi.get(url);

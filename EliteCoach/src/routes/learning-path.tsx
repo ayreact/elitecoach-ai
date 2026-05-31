@@ -8,28 +8,34 @@ import {
     aiTutorApi,
     acsApi,
     extractErrorMessage,
-    normalizeUserType,
     unwrapApiData,
     getLearningPath,
-    generateLearningPath,
 } from "@/lib/api-client";
 import { toast } from "sonner";
 import { Pencil, Check, Circle } from "lucide-react";
 
-interface PathStep {
-    id?: string;
-    course_name: string;
-    estimated_time?: string;
-    status?: "completed" | "in_progress" | "upcoming";
+interface PathItem {
+    id: string;
+    position: number;
+    status: string;
+    course_id: string;
+    course_title: string;
+    total_minutes?: number;
+    course_domain?: string | null;
+    course_difficulty?: number | null;
+    unlocked_at?: string | null;
 }
 
 interface LearningPath {
+    id?: string;
+    status?: string;
+    items?: PathItem[];
+    generated_at?: string;
+    version?: number;
+    // Optional fallback properties
     goal?: string;
     target_role?: string;
-    steps?: PathStep[];
     time_per_week?: number;
-    study_plan?: string;
-    next_course?: string;
 }
 
 export const Route = createFileRoute("/learning-path")({
@@ -63,7 +69,7 @@ function LearningPathPage() {
         navigate({ to: "/onboarding" });
     };
 
-    const steps: PathStep[] = path?.steps ?? [];
+    const items: PathItem[] = path?.items ?? [];
 
     return (
         <div className="min-h-screen flex flex-col bg-surface">
@@ -103,7 +109,7 @@ function LearningPathPage() {
 
                 {loading ? (
                     <div className="card-base h-96 animate-pulse" />
-                ) : !path?.study_plan && steps.length === 0 ? (
+                ) : items.length === 0 ? (
                     <div className="card-base text-center py-16">
                         <h3 className="text-xl font-semibold mb-2">
                             No path yet
@@ -119,23 +125,10 @@ function LearningPathPage() {
                             Set my goal
                         </button>
                     </div>
-                ) : path?.study_plan ? (
-                    <div className="card-base font-mono whitespace-pre-wrap text-sm leading-relaxed overflow-x-auto text-navy">
-                        {path.study_plan}
-                        <div className="mt-8 pt-4 border-t border-border flex justify-between items-center">
-                            <p className="text-base font-semibold">
-                                Next up:{" "}
-                                <span className="text-primary">
-                                    {/* Grab the title of the first item in the next_courses array */}
-                                    {(path as any)?.next_courses?.[0]?.title || "N/A"}
-                                </span>
-                            </p>
-                        </div>
-                    </div>
                 ) : (
                     <div className="relative pl-8">
                         <div className="absolute left-3 top-2 bottom-2 w-px bg-border" />
-                        {steps.map((step, i) => {
+                        {items.map((step, i) => {
                             const status = step.status ?? "upcoming";
                             const dotClasses =
                                 status === "completed"
@@ -171,13 +164,13 @@ function LearningPathPage() {
                                                     Step {i + 1}
                                                 </span>
                                                 <h3 className="text-lg font-semibold mt-1">
-                                                    {step.course_name}
+                                                    {step.course_title}
                                                 </h3>
-                                                {step.estimated_time && (
+                                                {step.total_minutes ? (
                                                     <p className="text-sm text-text-secondary mt-1">
-                                                        ~{step.estimated_time}
+                                                        ~{step.total_minutes} mins
                                                     </p>
-                                                )}
+                                                ) : null}
                                             </div>
                                             <span
                                                 className={`label-caps px-3 py-1.5 rounded-sm shrink-0 ${

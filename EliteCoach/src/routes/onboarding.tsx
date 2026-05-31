@@ -90,6 +90,8 @@ function OnboardingPage() {
   const [questions, setQuestions] = useState<DiagnosticQuestion[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [activeQuestionIdx, setActiveQuestionIdx] = useState(0);
+  const [fetchingQuestions, setFetchingQuestions] = useState(false);
+  const [profileId, setProfileId] = useState<string | undefined>(undefined);
 
   // Step 4: Loading & Generation State
   const [generating, setGenerating] = useState(false);
@@ -99,17 +101,28 @@ function OnboardingPage() {
   // Load questions for the selected domain when step 3 starts
   useEffect(() => {
     if (step === 3) {
-      getDiagnosticQuestions(selectedDomain)
+      setFetchingQuestions(true);
+      getDiagnosticQuestions({
+        current_role: currentRole || "Beginner",
+        years_experience: experience === "beginner" ? 0 : experience === "intermediate" ? 2 : 5,
+        career_goal: customGoal,
+        hours_per_week: hoursPerWeek
+      })
         .then((res) => {
-          setQuestions(res);
+          setQuestions(res?.questions || []);
+          setProfileId(res?.profile_id);
           setAnswers({});
           setActiveQuestionIdx(0);
         })
         .catch(() => {
           toast.error("Failed to load diagnostic questions");
+          setQuestions([]);
+        })
+        .finally(() => {
+          setFetchingQuestions(false);
         });
     }
-  }, [step, selectedDomain]);
+  }, [step, currentRole, experience, customGoal, hoursPerWeek]);
 
   // Loading stepper simulation for Step 4
   useEffect(() => {
@@ -167,13 +180,7 @@ function OnboardingPage() {
     setGenerating(true);
     setLoadingStep(0);
     try {
-      const pathResult = await submitOnboardingDiagnostic(userId, {
-        goal: customGoal.trim(),
-        domain: selectedDomain,
-        experience,
-        hours_per_week: hoursPerWeek,
-        answers,
-      });
+      const pathResult = await submitOnboardingDiagnostic(userId, { profile_id: profileId, answers });
       setGeneratedPathResult(pathResult);
     } catch (err) {
       toast.error(extractErrorMessage(err, "Path generation failed"));
@@ -361,7 +368,37 @@ function OnboardingPage() {
           )}
 
           {/* STEP 3: SKILLS DIAGNOSTIC MCQ CHECK */}
-          {step === 3 && questions.length > 0 && (
+          {step === 3 && fetchingQuestions && (
+            <div className="card-base p-16 text-center space-y-6 animate-fade-in-up duration-300">
+              <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+              <h3 className="text-xl font-bold text-text-primary">Preparing your diagnostic...</h3>
+              <p className="text-sm text-text-secondary">We are generating custom questions to assess your current skills.</p>
+            </div>
+          )}
+
+          {step === 3 && !fetchingQuestions && questions.length === 0 && (
+            <div className="card-base p-16 text-center space-y-8 animate-fade-in-up duration-300">
+              <div className="w-16 h-16 bg-surface rounded-full flex items-center justify-center mx-auto">
+                <Sparkles size={28} className="text-coral" />
+              </div>
+              <div className="space-y-3">
+                <h3 className="text-xl font-bold text-text-primary">Ready to generate your path!</h3>
+                <p className="text-sm text-text-secondary max-w-md mx-auto">
+                  We have enough information to build your personalized curriculum. 
+                  Click below to generate your unique learning path right away.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={triggerGeneration}
+                className="h-12 px-8 bg-coral text-white text-sm font-bold rounded hover:opacity-90 transition-opacity flex items-center justify-center gap-2 mx-auto"
+              >
+                <Sparkles size={16} /> Generate Path Now
+              </button>
+            </div>
+          )}
+
+          {step === 3 && !fetchingQuestions && questions.length > 0 && (
             <div className="card-base p-8 space-y-8 animate-fade-in-up duration-300">
               <div className="flex items-center justify-between border-b border-border pb-4">
                 <div>
@@ -376,11 +413,11 @@ function OnboardingPage() {
               {/* Question prompt */}
               <div className="space-y-6">
                 <h4 className="text-xl font-bold leading-snug text-text-primary">
-                  {questions[activeQuestionIdx].question}
+                  {questions[activeQuestionIdx].question_text}
                 </h4>
 
                 <div className="space-y-3">
-                  {questions[activeQuestionIdx].options.map((opt) => {
+                  {(questions[activeQuestionIdx].options || []).map((opt) => {
                     const isSelected = answers[questions[activeQuestionIdx].id] === opt;
                     return (
                       <button
@@ -477,18 +514,10 @@ function OnboardingPage() {
 
                   {/* Skills feedback summary box */}
                   <div className="bg-navy/[0.02] border border-border/70 rounded p-5 text-left text-sm space-y-3 font-medium">
-                    <div className="flex justify-between items-center border-b border-border pb-2.5">
-                      <span className="text-text-secondary">Diagnostic Score:</span>
-                      <span className="font-mono font-bold bg-primary/10 text-primary px-2.5 py-0.5 rounded">
-                        {generatedPathResult?.study_plan?.match(/(\d+)%/)?.[1] || "80"}%
-                      </span>
-                    </div>
                     <div className="flex items-start gap-2.5 leading-relaxed text-text-secondary">
                       <Zap size={16} className="text-coral shrink-0 mt-0.5 animate-pulse" />
                       <span>
-                        {generatedPathResult?.study_plan?.includes("Skipped")
-                          ? "Congratulations! You proved your proficiency in introductory modules and have skipped straight to core operations."
-                          : "We have included fundamental introductory modules to help reinforce your concepts before advanced exercises."}
+                        Your learning path has been uniquely assembled based on your current role, career goals, and the diagnostic evaluation. You can now begin your journey towards mastery.
                       </span>
                     </div>
                   </div>

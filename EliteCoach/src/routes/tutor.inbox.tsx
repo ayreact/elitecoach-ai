@@ -8,11 +8,17 @@ import {
   submitEscalationResponse,
   getTutorEarnings,
   pushCorrectionToRAG,
-  updateEscalationStatus,
+  startConversation,
+  getConversationMessages,
+  sendDirectMessage,
   extractErrorMessage,
+  saveTutorPayoutAccount,
   type EscalatedSession,
   type TutorEarnings,
+  type DirectConversation,
+  type DirectMessage,
 } from "@/lib/api-client";
+import { VideoRecorder } from "@/components/VideoRecorder";
 import { toast } from "sonner";
 import {
   Inbox,
@@ -50,6 +56,16 @@ export const Route = createFileRoute("/tutor/inbox")({
   component: TutorInboxPage,
 });
 
+const AVAILABILITY_SLOTS = [
+  { day: "Tomorrow", time: "09:00 AM", value: "2026-06-01T09:00:00" },
+  { day: "Tomorrow", time: "11:00 AM", value: "2026-06-01T11:00:00" },
+  { day: "Tomorrow", time: "02:00 PM", value: "2026-06-01T14:00:00" },
+  { day: "Tomorrow", time: "04:00 PM", value: "2026-06-01T16:00:00" },
+  { day: "Day after tomorrow", time: "10:00 AM", value: "2026-06-02T10:00:00" },
+  { day: "Day after tomorrow", time: "01:00 PM", value: "2026-06-02T13:00:00" },
+  { day: "Day after tomorrow", time: "03:00 PM", value: "2026-06-02T15:00:00" },
+];
+
 function TutorInboxPage() {
   const [escalations, setEscalations] = useState<EscalatedSession[]>([]);
   const [earnings, setEarnings] = useState<TutorEarnings | null>(null);
@@ -61,6 +77,13 @@ function TutorInboxPage() {
   const [viewMode, setViewMode] = useState<"inbox" | "earnings">("inbox");
   const [actionTab, setActionTab] = useState<"text" | "video" | "live">("text");
 
+  // Direct Message states
+  const [activeConversation, setActiveConversation] = useState<DirectConversation | null>(null);
+  const [dmMessages, setDmMessages] = useState<DirectMessage[]>([]);
+  const [dmInput, setDmInput] = useState("");
+  const [sendingDm, setSendingDm] = useState(false);
+  const [loadingDm, setLoadingDm] = useState(false);
+
   // Selection states
   const [replyText, setReplyText] = useState("");
   const [annotations, setAnnotations] = useState<Record<string, string>>({}); // msgId -> note
@@ -68,25 +91,20 @@ function TutorInboxPage() {
   const [activeAnnotationText, setActiveAnnotationText] = useState("");
 
   // Video recorder states
-  const [recState, setRecState] = useState<"idle" | "preview" | "recording" | "playback">("idle");
-  const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
-  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
-  const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
-  const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
-  const [recordedVideoBlob, setRecordedVideoBlob] = useState<Blob | null>(null);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const videoPreviewRef = useRef<HTMLVideoElement>(null);
-  const videoPlaybackRef = useRef<HTMLVideoElement>(null);
-  const recordingTimerRef = useRef<any>(null);
+  const [videoUrl, setVideoUrl] = useState<string>("");
 
   // Calendar Booking States
   const [meetingLink, setMeetingLink] = useState("");
-  const [selectedDate, setSelectedDate] = useState<string>("");
-  const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>("");
+  const [meetingTime, setMeetingTime] = useState<string>("");
 
   // RAG correction states
   const [pushToRag, setPushToRag] = useState(false);
   const [ragSourceText, setRagSourceText] = useState("");
+
+  // Payout Account states
+  const [bankName, setBankName] = useState("");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [savingBank, setSavingBank] = useState(false);
 
   // Load Initial Data
   const loadData = async () => {
@@ -105,7 +123,7 @@ function TutorInboxPage() {
         setSelectedId(openCases[0].id);
         if (openCases[0].status === "open") {
           // Auto assign to me
-          await updateEscalationStatus(openCases[0].id, "assigned");
+
           setEscalations(prev => prev.map(item => item.id === openCases[0].id ? { ...item, status: "assigned" } : item));
         }
       } else if (escData.length > 0) {
@@ -121,6 +139,23 @@ function TutorInboxPage() {
   useEffect(() => {
     loadData();
   }, []);
+
+  const handleSavePayoutAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bankName.trim() || !accountNumber.trim()) {
+      toast.error("Please provide both Bank Name and Account Number.");
+      return;
+    }
+    setSavingBank(true);
+    try {
+      await saveTutorPayoutAccount(bankName, accountNumber);
+      toast.success("Payout account details saved successfully!");
+    } catch (err) {
+      toast.error("Failed to save payout account details.");
+    } finally {
+      setSavingBank(false);
+    }
+  };
 
   // Filter & Search logic
   const filteredEscalations = escalations.filter((item) => {
@@ -143,20 +178,61 @@ function TutorInboxPage() {
       setAnnotatingMsgId(null);
       setActiveAnnotationText("");
       setActionTab("text");
-      setMeetingLink("");
-      setSelectedDate("");
-      setSelectedTimeSlot("");
       setPushToRag(false);
       setRagSourceText("");
-      stopWebcam();
-      setRecState("idle");
-      setRecordedVideoUrl(null);
-      setRecordedVideoBlob(null);
 
       // Auto-populate RAG source with the user's issue topic if push is toggled later
       setRagSourceText(`Grounding fact for course: ${selectedEscalation.course_title}\n\nCorrection on topic: ${selectedEscalation.escalation_reason.replace("Learner asked", "Regarding").replace("Grounding block", "Outside context")}`);
     }
   }, [selectedId]);
+
+  // Load Direct Message conversation for resolved escalations
+  useEffect(() => {
+    let active = true;
+    if (selectedEscalation && selectedEscalation.status === "resolved") {
+      const loadDm = async () => {
+        setLoadingDm(true);
+        try {
+          const learnerId = selectedEscalation.learner_email;
+          const subject = `Follow-up on: ${selectedEscalation.course_title}`;
+          const conv = await startConversation(learnerId, subject);
+          if (!active) return;
+          setActiveConversation(conv);
+          
+          const msgs = await getConversationMessages(conv.id);
+          if (!active) return;
+          setDmMessages(msgs);
+        } catch (e) {
+          console.error("Failed to load DMs", e);
+        } finally {
+          if (active) setLoadingDm(false);
+        }
+      };
+      loadDm();
+    } else {
+      setActiveConversation(null);
+      setDmMessages([]);
+    }
+    return () => {
+      active = false;
+    };
+  }, [selectedId, selectedEscalation?.status]);
+
+  const handleSendDm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeConversation || !dmInput.trim()) return;
+    setSendingDm(true);
+    try {
+      const newMsg = await sendDirectMessage(activeConversation.id, dmInput.trim());
+      setDmMessages((prev) => [...prev, newMsg]);
+      setDmInput("");
+      toast.success("Follow-up message sent!");
+    } catch (e) {
+      toast.error("Failed to send direct message");
+    } finally {
+      setSendingDm(false);
+    }
+  };
 
   // Assignment trigger
   const handleSelectEscalation = async (id: string) => {
@@ -164,7 +240,7 @@ function TutorInboxPage() {
     const item = escalations.find(x => x.id === id);
     if (item && item.status === "open") {
       try {
-        await updateEscalationStatus(id, "assigned");
+
         setEscalations(prev =>
           prev.map(x => x.id === id ? { ...x, status: "assigned" } : x)
         );
@@ -195,110 +271,7 @@ function TutorInboxPage() {
     setActiveAnnotationText("");
   };
 
-  // 2. Video Recorder Logic (MediaRecorder API)
-  const startWebcam = async () => {
-    setRecState("idle");
-    setRecordedVideoUrl(null);
-    setRecordedVideoBlob(null);
-    setRecordedChunks([]);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: "user" },
-        audio: true,
-      });
-      setMediaStream(stream);
-      setRecState("preview");
-      if (videoPreviewRef.current) {
-        videoPreviewRef.current.srcObject = stream;
-      }
-    } catch (err) {
-      toast.error("Could not access camera/microphone. Please verify browser permissions.");
-    }
-  };
-
-  const stopWebcam = () => {
-    if (mediaStream) {
-      mediaStream.getTracks().forEach((track) => track.stop());
-      setMediaStream(null);
-    }
-    if (recordingTimerRef.current) {
-      clearInterval(recordingTimerRef.current);
-    }
-  };
-
-  const startRecording = () => {
-    if (!mediaStream) return;
-    setRecordedChunks([]);
-    setRecordingSeconds(0);
-    setRecState("recording");
-
-    const recorder = new MediaRecorder(mediaStream, { mimeType: "video/webm" });
-    setMediaRecorder(recorder);
-
-    recorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) {
-        setRecordedChunks((prev) => [...prev, event.data]);
-      }
-    };
-
-    recorder.onstop = () => {
-      // Compiled at stop
-    };
-
-    recorder.start(10); // Capture chunks every 10ms
-
-    recordingTimerRef.current = setInterval(() => {
-      setRecordingSeconds((prev) => prev + 1);
-    }, 1000);
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorder && mediaRecorder.state !== "inactive") {
-      mediaRecorder.stop();
-    }
-    stopWebcam();
-    clearInterval(recordingTimerRef.current);
-    setRecState("playback");
-  };
-
-  useEffect(() => {
-    if (recState === "playback" && recordedChunks.length > 0) {
-      const blob = new Blob(recordedChunks, { type: "video/webm" });
-      const url = URL.createObjectURL(blob);
-      setRecordedVideoUrl(url);
-      setRecordedVideoBlob(blob);
-      if (videoPlaybackRef.current) {
-        videoPlaybackRef.current.src = url;
-      }
-    }
-  }, [recState, recordedChunks]);
-
-  const resetRecording = () => {
-    setRecordedVideoUrl(null);
-    setRecordedVideoBlob(null);
-    setRecordedChunks([]);
-    setRecordingSeconds(0);
-    startWebcam();
-  };
-
-  // 3. Calendar booking simulator UI dates
-  const getNext7Days = () => {
-    const dates = [];
-    const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    for (let i = 1; i <= 7; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() + i);
-      dates.push({
-        raw: d.toISOString().split("T")[0],
-        dayName: daysOfWeek[d.getDay()],
-        dayNum: d.getDate(),
-        month: d.toLocaleString("default", { month: "short" }),
-      });
-    }
-    return dates;
-  };
-
-  const timeSlots = ["09:00 AM", "10:30 AM", "01:00 PM", "02:30 PM", "04:00 PM"];
+  // (MediaRecorder and Calendar simulator logic removed)
 
   // 4. Resolve Submit
   const handleResolve = async () => {
@@ -308,14 +281,12 @@ function TutorInboxPage() {
       toast.error("Please enter a text reply for the learner.");
       return;
     }
-
-    if (actionTab === "video" && !recordedVideoBlob) {
+    if (actionTab === "video" && !videoUrl) {
       toast.error("Please record a video response first.");
       return;
     }
-
-    if (actionTab === "live" && (!selectedDate || !selectedTimeSlot)) {
-      toast.error("Please select a date and time slot for the 1:1 session.");
+    if (actionTab === "live" && !meetingTime) {
+      toast.error("Please select a live session meeting slot.");
       return;
     }
 
@@ -326,22 +297,27 @@ function TutorInboxPage() {
         text,
       }));
 
-      const meetingTime = actionTab === "live" ? `${selectedDate} ${selectedTimeSlot}` : undefined;
-      const resolutionDetail =
-        actionTab === "text"
-          ? replyText
-          : actionTab === "video"
-            ? "Video feedback uploaded successfully."
-            : `Live 1:1 consultation scheduled for ${selectedDate} at ${selectedTimeSlot}.${meetingLink ? ` Link: ${meetingLink}` : ""}`;
+      const resolutionDetail = actionTab === "text" 
+        ? replyText 
+        : actionTab === "video" 
+          ? "Video response recorded." 
+          : `Live session scheduled at ${new Date(meetingTime).toLocaleString()}`;
 
-      await submitEscalationResponse(selectedEscalation.id, {
-        resolution_type: actionTab === "live" ? "live_session" : actionTab,
+      const payload: any = {
+        resolution_type: actionTab === "text" ? "text" : actionTab === "video" ? "video" : "live_session",
         resolution_detail: resolutionDetail,
-        video_blob: recordedVideoBlob || undefined,
-        meeting_time: meetingTime,
         correction_pushed_to_rag: pushToRag,
         annotations: annotationsPayload,
-      });
+      };
+
+      if (actionTab === "video" && videoUrl) {
+        payload.video_url = videoUrl;
+      }
+      if (actionTab === "live" && meetingTime) {
+        payload.meeting_time = meetingTime;
+      }
+
+      await submitEscalationResponse(selectedEscalation.id, payload);
 
       if (pushToRag && ragSourceText.trim()) {
         await pushCorrectionToRAG(selectedEscalation.course_id, selectedEscalation.course_title, ragSourceText);
@@ -352,7 +328,15 @@ function TutorInboxPage() {
       // Update state locally
       setEscalations((prev) =>
         prev.map((item) =>
-          item.id === selectedEscalation.id ? { ...item, status: "resolved" } : item
+          item.id === selectedEscalation.id ? { 
+            ...item, 
+            status: "resolved",
+            resolution_type: payload.resolution_type,
+            resolution_detail: payload.resolution_detail,
+            resolution_video_url: payload.video_url,
+            resolution_meeting_time: payload.meeting_time,
+            correction_pushed_to_rag: pushToRag
+          } : item
         )
       );
 
@@ -396,7 +380,7 @@ function TutorInboxPage() {
           </div>
           <div className="flex bg-white/5 rounded-lg p-1 border border-white/10 shrink-0 self-start sm:self-auto">
             <button
-              onClick={() => { setViewMode("inbox"); stopWebcam(); }}
+              onClick={() => { setViewMode("inbox"); }}
               className={`px-4 py-2 rounded text-sm font-semibold flex items-center gap-2 transition-all cursor-pointer ${
                 viewMode === "inbox" ? "bg-white text-navy shadow-lg" : "text-white/70 hover:text-white"
               }`}
@@ -404,7 +388,7 @@ function TutorInboxPage() {
               <Inbox size={16} /> Queue
             </button>
             <button
-              onClick={() => { setViewMode("earnings"); stopWebcam(); }}
+              onClick={() => { setViewMode("earnings"); }}
               className={`px-4 py-2 rounded text-sm font-semibold flex items-center gap-2 transition-all cursor-pointer ${
                 viewMode === "earnings" ? "bg-white text-navy shadow-lg" : "text-white/70 hover:text-white"
               }`}
@@ -490,6 +474,42 @@ function TutorInboxPage() {
                   </tbody>
                 </table>
               </div>
+
+              {/* PAYOUT SETTINGS */}
+              <div className="card-base p-6 mt-6">
+                <h3 className="font-semibold text-lg mb-4">Payout Settings</h3>
+                <form onSubmit={handleSavePayoutAccount} className="space-y-4 max-w-md">
+                  <div>
+                    <label className="label-caps text-text-secondary block mb-2">Bank Name</label>
+                    <input
+                      type="text"
+                      value={bankName}
+                      onChange={(e) => setBankName(e.target.value)}
+                      placeholder="e.g. Access Bank"
+                      className="w-full h-11 px-4 border border-border outline-none text-sm bg-white rounded"
+                    />
+                  </div>
+                  <div>
+                    <label className="label-caps text-text-secondary block mb-2">Account Number (NUBAN)</label>
+                    <input
+                      type="text"
+                      value={accountNumber}
+                      onChange={(e) => setAccountNumber(e.target.value)}
+                      placeholder="e.g. 0123456789"
+                      maxLength={10}
+                      className="w-full h-11 px-4 border border-border outline-none text-sm bg-white rounded font-mono"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={savingBank}
+                    className="h-11 px-6 bg-navy text-white font-bold hover:bg-navy/90 transition-all rounded shadow-sm disabled:opacity-50"
+                  >
+                    {savingBank ? "Saving..." : "Save Bank Details"}
+                  </button>
+                </form>
+              </div>
+
             </div>
           ) : (
             /* INBOX / ESCALATION WORKSPACE VIEW */
@@ -723,20 +743,129 @@ function TutorInboxPage() {
 
                     {/* ACTIONS RESOLUTION BLOCK */}
                     {selectedEscalation.status === "resolved" ? (
-                      /* Resolved Detail Card */
-                      <div className="card-base p-6 border-l-4 border-l-success bg-success/5 border-success/30 flex items-start gap-4">
-                        <CheckCircle size={24} className="text-success shrink-0 mt-1" />
-                        <div>
-                          <h3 className="font-bold text-success text-base">This session has been resolved</h3>
-                          <p className="text-text-secondary text-sm mt-1">
-                            Type: <strong className="capitalize">{selectedEscalation.resolution_type || "text"}</strong>
-                          </p>
-                          <div className="mt-4 text-sm text-text-primary bg-white/70 p-4 border border-border rounded italic">
-                            "{selectedEscalation.resolution_detail}"
+                      <div className="space-y-6">
+                        {/* Resolved Detail Card */}
+                        <div className="card-base p-6 border-l-4 border-l-success bg-success/5 border-success/30 flex items-start gap-4 animate-fade-in">
+                          <CheckCircle size={24} className="text-success shrink-0 mt-1" />
+                          <div className="flex-1">
+                            <h3 className="font-bold text-success text-base">This session has been resolved</h3>
+                            <p className="text-text-secondary text-sm mt-1">
+                              Type: <strong className="capitalize">{selectedEscalation.resolution_type || "text"}</strong>
+                            </p>
+                            {selectedEscalation.resolution_meeting_time && (
+                              <p className="text-xs text-text-primary mt-1 font-semibold">
+                                Meeting Time: {new Date(selectedEscalation.resolution_meeting_time).toLocaleString()}
+                              </p>
+                            )}
+                            {selectedEscalation.resolution_video_url && (
+                              <div className="mt-3 aspect-video w-full max-w-sm rounded border border-border overflow-hidden bg-black">
+                                <video src={selectedEscalation.resolution_video_url} controls className="w-full h-full" />
+                              </div>
+                            )}
+                            <div className="mt-4 text-sm text-text-primary bg-white/70 p-4 border border-border rounded italic">
+                              "{selectedEscalation.resolution_detail}"
+                            </div>
+                            {selectedEscalation.correction_pushed_to_rag && (
+                              <div className="mt-3 flex items-center gap-1.5 text-xs text-primary font-bold">
+                                <Sparkles size={14} /> Pushed to AI vector store grounding index.
+                              </div>
+                            )}
                           </div>
-                          {selectedEscalation.correction_pushed_to_rag && (
-                            <div className="mt-3 flex items-center gap-1.5 text-xs text-primary font-bold">
-                              <Sparkles size={14} /> Pushed to AI vector store grounding index.
+                        </div>
+
+                        {/* Direct Follow-up messaging panel */}
+                        <div className="card-base p-0 overflow-hidden flex flex-col border border-border shadow-sm">
+                          <div className="px-6 py-4 border-b border-border bg-navy/[0.02] flex items-center justify-between">
+                            <h3 className="font-semibold text-sm flex items-center gap-1.5 text-navy">
+                              <Send size={14} className="text-coral" /> Direct Follow-up Discuss Thread
+                            </h3>
+                            <span className="text-[10px] text-text-secondary bg-success/10 text-success px-2 py-0.5 rounded font-bold uppercase">
+                              Active DM
+                            </span>
+                          </div>
+                          
+                          {loadingDm ? (
+                            <div className="p-10 flex flex-col items-center justify-center text-text-secondary text-xs gap-2">
+                              <div className="w-6 h-6 border-2 border-border border-t-primary rounded-full animate-spin" />
+                              Loading messages...
+                            </div>
+                          ) : !activeConversation ? (
+                            <div className="p-10 text-center space-y-4">
+                              <p className="text-text-secondary text-xs">
+                                Need to discuss details with the learner directly? You can start a follow-up DM thread.
+                              </p>
+                              <button
+                                onClick={async () => {
+                                  setLoadingDm(true);
+                                  try {
+                                    const conv = await startConversation(
+                                      selectedEscalation.learner_email,
+                                      `Follow-up on: ${selectedEscalation.course_title}`
+                                    );
+                                    setActiveConversation(conv);
+                                  } catch (e) {
+                                    toast.error("Failed to start thread");
+                                  } finally {
+                                    setLoadingDm(false);
+                                  }
+                                }}
+                                className="h-10 px-5 bg-navy text-white text-xs font-bold rounded hover:bg-navy/90 transition-all cursor-pointer"
+                              >
+                                Start Follow-up Discussion
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col">
+                              {/* Messages list */}
+                              <div className="p-6 space-y-4 max-h-[300px] overflow-y-auto bg-surface/30">
+                                {dmMessages.length === 0 ? (
+                                  <p className="text-xs text-text-secondary text-center italic py-4">
+                                    No messages in this discussion yet. Send a message to start follow-up.
+                                  </p>
+                                ) : (
+                                  dmMessages.map((msg) => {
+                                    const isMe = msg.sender_id === "tutor-current";
+                                    return (
+                                      <div
+                                        key={msg.id}
+                                        className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}
+                                      >
+                                        <div className="text-[9px] text-text-secondary mb-0.5 px-1 font-mono">
+                                          {isMe ? "You (Tutor)" : selectedEscalation.learner_name} &bull; {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        </div>
+                                        <div
+                                          className={`max-w-[85%] px-3.5 py-2.5 rounded text-xs leading-relaxed ${
+                                            isMe
+                                              ? "bg-navy text-white font-medium rounded-br-none"
+                                              : "bg-white text-text-primary border border-border rounded-bl-none shadow-sm"
+                                          }`}
+                                        >
+                                          {msg.content}
+                                        </div>
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
+                              
+                              {/* Input panel */}
+                              <form onSubmit={handleSendDm} className="border-t border-border p-4 bg-white flex gap-2">
+                                <input
+                                  type="text"
+                                  value={dmInput}
+                                  onChange={(e) => setDmInput(e.target.value)}
+                                  placeholder={`Send follow-up to ${selectedEscalation.learner_name}...`}
+                                  className="flex-1 h-10 px-3.5 border border-border outline-none text-xs bg-surface-card rounded"
+                                  disabled={sendingDm}
+                                />
+                                <button
+                                  type="submit"
+                                  disabled={sendingDm || !dmInput.trim()}
+                                  className="h-10 px-4 bg-primary text-white rounded font-bold text-xs hover:bg-primary-hover transition-colors disabled:opacity-50 flex items-center justify-center cursor-pointer"
+                                >
+                                  {sendingDm ? "Sending..." : "Send"}
+                                </button>
+                              </form>
                             </div>
                           )}
                         </div>
@@ -744,30 +873,33 @@ function TutorInboxPage() {
                     ) : (
                       /* ACTIVE ACTION INTERFACE */
                       <div className="card-base p-0 overflow-hidden">
-                        <div className="flex border-b border-border bg-surface">
+                        <div className="flex border-b border-border bg-surface text-center">
                           <button
+                            type="button"
                             onClick={() => setActionTab("text")}
                             className={`flex-1 h-12 inline-flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
-                              actionTab === "text" ? "border-primary text-primary bg-white" : "border-transparent text-text-secondary hover:text-text-primary"
+                              actionTab === "text" ? "border-primary text-primary bg-white font-bold" : "border-transparent text-text-secondary hover:text-text-primary font-medium"
                             }`}
                           >
-                            <FileText size={16} /> Text & Annotations
+                            <FileText size={15} /> Text Response
                           </button>
                           <button
-                            onClick={() => { setActionTab("video"); startWebcam(); }}
+                            type="button"
+                            onClick={() => setActionTab("video")}
                             className={`flex-1 h-12 inline-flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
-                              actionTab === "video" ? "border-primary text-primary bg-white" : "border-transparent text-text-secondary hover:text-text-primary"
+                              actionTab === "video" ? "border-primary text-primary bg-white font-bold" : "border-transparent text-text-secondary hover:text-text-primary font-medium"
                             }`}
                           >
-                            <Video size={16} /> Record Video Response
+                            <Video size={15} /> Record Video
                           </button>
                           <button
-                            onClick={() => { setActionTab("live"); stopWebcam(); }}
+                            type="button"
+                            onClick={() => setActionTab("live")}
                             className={`flex-1 h-12 inline-flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
-                              actionTab === "live" ? "border-primary text-primary bg-white" : "border-transparent text-text-secondary hover:text-text-primary"
+                              actionTab === "live" ? "border-primary text-primary bg-white font-bold" : "border-transparent text-text-secondary hover:text-text-primary font-medium"
                             }`}
                           >
-                            <Calendar size={16} /> Schedule 1:1
+                            <Calendar size={15} /> Live Booking
                           </button>
                         </div>
 
@@ -801,146 +933,88 @@ function TutorInboxPage() {
                             </div>
                           )}
 
-                          {/* TAB 2: Video Response using MediaRecorder */}
+                          {/* TAB 2: Video Response */}
                           {actionTab === "video" && (
                             <div className="space-y-4">
-                              <span className="label-caps text-text-secondary block mb-2">In-Browser Video Feedback Tool</span>
-                              
-                              <div className="aspect-video w-full max-w-lg mx-auto bg-black rounded-lg overflow-hidden border border-border relative flex items-center justify-center">
-                                {/* Live webcam preview */}
-                                {recState === "preview" || recState === "recording" ? (
-                                  <>
-                                    <video
-                                      ref={videoPreviewRef}
-                                      autoPlay
-                                      playsInline
-                                      muted
-                                      className="w-full h-full object-cover"
-                                    />
-                                    {recState === "recording" && (
-                                      <div className="absolute top-4 left-4 bg-red-600 text-white text-xs font-bold px-2 py-1 rounded flex items-center gap-1.5 animate-pulse">
-                                        <div className="w-2 h-2 bg-white rounded-full" />
-                                        REC &bull; {Math.floor(recordingSeconds / 60)}:{String(recordingSeconds % 60).padStart(2, "0")}
-                                      </div>
-                                    )}
-                                  </>
-                                ) : recState === "playback" ? (
-                                  /* playback element */
-                                  <video
-                                    ref={videoPlaybackRef}
-                                    controls
-                                    className="w-full h-full object-cover"
-                                  />
-                                ) : (
-                                  /* Idle placeholder */
-                                  <div className="text-center p-8">
-                                    <Camera size={48} className="text-white/20 mx-auto mb-4" />
-                                    <button
-                                      onClick={startWebcam}
-                                      className="h-10 px-5 bg-white text-navy text-xs font-bold rounded hover:bg-slate-100 transition-colors"
-                                    >
-                                      Initialize Webcam
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-
-                              <div className="flex justify-center gap-3">
-                                {recState === "preview" && (
-                                  <button
-                                    onClick={startRecording}
-                                    className="h-10 px-5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded flex items-center gap-2 transition-colors cursor-pointer"
-                                  >
-                                    <Play size={14} /> Start Recording
+                              <VideoRecorder 
+                                onRecordComplete={(blob) => {
+                                  const url = URL.createObjectURL(blob);
+                                  setVideoUrl(url);
+                                  toast.success("Video response recorded and attached!");
+                                }} 
+                                onCancel={() => setVideoUrl("")}
+                              />
+                              {videoUrl && (
+                                <div className="bg-success/5 border border-success/20 rounded p-4 flex items-center justify-between text-xs animate-expand-down">
+                                  <span className="text-success font-semibold flex items-center gap-1.5">
+                                    <Check size={14} /> Ready to send recorded video response
+                                  </span>
+                                  <button onClick={() => setVideoUrl("")} className="text-destructive hover:underline">
+                                    Discard
                                   </button>
-                                )}
-                                {recState === "recording" && (
-                                  <button
-                                    onClick={stopRecording}
-                                    className="h-10 px-5 bg-navy border border-white/20 text-white text-xs font-bold rounded flex items-center gap-2 transition-colors cursor-pointer"
-                                  >
-                                    <Square size={14} /> Stop Recording
-                                  </button>
-                                )}
-                                {recState === "playback" && (
-                                  <>
-                                    <button
-                                      onClick={resetRecording}
-                                      className="h-10 px-5 border border-border text-xs font-bold rounded hover:bg-surface transition-colors flex items-center gap-2 cursor-pointer bg-white"
-                                    >
-                                      <RotateCcw size={14} /> Re-Record
-                                    </button>
-                                  </>
-                                )}
-                              </div>
+                                </div>
+                              )}
                             </div>
                           )}
 
-                          {/* TAB 3: Schedule 1:1 Live Simulator */}
+                          {/* TAB 3: Live Session Booking */}
                           {actionTab === "live" && (
-                            <div className="space-y-6">
+                            <div className="space-y-4">
                               <div>
-                                <label className="label-caps text-text-secondary block mb-2">Meeting Link (Zoom / Google Meet)</label>
-                                <input
-                                  type="text"
-                                  value={meetingLink}
-                                  onChange={(e) => setMeetingLink(e.target.value)}
-                                  placeholder="e.g. https://zoom.us/j/938204928"
-                                  className="w-full h-11 px-4 border border-border outline-none text-sm bg-white rounded font-mono"
-                                />
-                              </div>
-
-                              {/* Calendar booking widget */}
-                              <div>
-                                <label className="label-caps text-text-secondary block mb-3">Select Date slot</label>
-                                <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
-                                  {getNext7Days().map((day) => {
-                                    const isSel = selectedDate === day.raw;
+                                <label className="label-caps text-text-secondary block mb-2">Select Availability Slot</label>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  {AVAILABILITY_SLOTS.map((slot) => {
+                                    const isSel = meetingTime === slot.value;
                                     return (
                                       <button
-                                        key={day.raw}
+                                        key={slot.value}
                                         type="button"
-                                        onClick={() => setSelectedDate(day.raw)}
-                                        className={`p-3 rounded border text-center transition-all cursor-pointer ${
-                                          isSel
-                                            ? "border-primary bg-primary/5 text-primary scale-105 font-bold"
-                                            : "border-border hover:border-slate-300 bg-white text-text-secondary"
+                                        onClick={() => {
+                                          setMeetingTime(slot.value);
+                                          setMeetingLink(`https://meet.google.com/${Math.random().toString(36).substring(2, 5)}-${Math.random().toString(36).substring(2, 6)}-${Math.random().toString(36).substring(2, 5)}`);
+                                        }}
+                                        className={`p-3 text-left border rounded text-xs flex flex-col transition-colors cursor-pointer ${
+                                          isSel ? "border-primary bg-primary/5 text-primary font-semibold animate-pulse" : "border-border hover:bg-slate-50 text-text-secondary"
                                         }`}
                                       >
-                                        <div className="text-[10px] uppercase font-mono">{day.dayName}</div>
-                                        <div className="text-lg font-bold my-0.5">{day.dayNum}</div>
-                                        <div className="text-[10px]">{day.month}</div>
+                                        <span className="font-bold text-[10px] uppercase text-coral">{slot.day}</span>
+                                        <span className="text-sm mt-0.5">{slot.time}</span>
                                       </button>
                                     );
                                   })}
                                 </div>
                               </div>
 
-                              {/* Time selection */}
-                              {selectedDate && (
-                                <div className="animate-expand-down">
-                                  <label className="label-caps text-text-secondary block mb-3">Select Available Time slot</label>
-                                  <div className="flex flex-wrap gap-2">
-                                    {timeSlots.map((slot) => {
-                                      const isSel = selectedTimeSlot === slot;
-                                      return (
-                                        <button
-                                          key={slot}
-                                          type="button"
-                                          onClick={() => setSelectedTimeSlot(slot)}
-                                          className={`px-4 py-2 text-xs font-semibold rounded border transition-all cursor-pointer ${
-                                            isSel
-                                              ? "border-primary bg-primary text-primary-foreground scale-105 font-bold"
-                                              : "border-border hover:border-slate-300 bg-white text-text-secondary"
-                                          }`}
-                                        >
-                                          {slot}
-                                        </button>
-                                      );
-                                    })}
+                              <div className="grid sm:grid-cols-2 gap-3 pt-2">
+                                <div>
+                                  <label className="label-caps text-text-secondary block mb-2">Or Custom Date/Time</label>
+                                  <input
+                                    type="datetime-local"
+                                    value={meetingTime}
+                                    onChange={(e) => setMeetingTime(e.target.value)}
+                                    className="w-full h-11 px-3 border border-border outline-none text-xs rounded bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="label-caps text-text-secondary block mb-2">Meeting Link (Google Meet)</label>
+                                  <div className="flex gap-2">
+                                    <input
+                                      type="text"
+                                      value={meetingLink}
+                                      onChange={(e) => setMeetingLink(e.target.value)}
+                                      placeholder="https://meet.google.com/abc-defg-hij"
+                                      className="flex-1 h-11 px-3 border border-border outline-none text-xs rounded bg-white font-mono"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => setMeetingLink(`https://meet.google.com/${Math.random().toString(36).substring(2, 5)}-${Math.random().toString(36).substring(2, 6)}-${Math.random().toString(36).substring(2, 5)}`)}
+                                      className="h-11 px-3 bg-navy text-white text-xs font-semibold rounded hover:bg-navy/95 cursor-pointer shrink-0"
+                                    >
+                                      Generate
+                                    </button>
                                   </div>
                                 </div>
-                              )}
+                              </div>
                             </div>
                           )}
 

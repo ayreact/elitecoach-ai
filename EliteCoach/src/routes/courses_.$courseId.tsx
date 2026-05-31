@@ -82,7 +82,6 @@ function CourseDetailPage() {
 
     const [course, setCourse] = useState<Course | null>(null);
     const [modules, setModules] = useState<Module[]>([]);
-    const [resumeSessionId, setResumeSessionId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [openModule, setOpenModule] = useState<string | null>(null);
     const [starting, setStarting] = useState(false);
@@ -102,12 +101,12 @@ function CourseDetailPage() {
         console.log("NAVIGATED: Processing course ID:", actualId);
 
         Promise.all([
-            contentApi.get("/courses/", { timeout: 10000 }).catch((err) => {
+            contentApi.get("/api/v1/courses/", { timeout: 10000 }).catch((err) => {
                 console.error("Failed to fetch course list:", err);
                 return { data: [] };
             }),
             contentApi
-                .get(`/courses/${courseId}/curriculum`, { timeout: 10000 })
+                .get(`/api/v1/learning/course/${courseId}`, { timeout: 10000 })
                 .catch((err) => {
                     console.error("Failed to fetch curriculum:", err);
                     return { data: null };
@@ -145,10 +144,22 @@ function CourseDetailPage() {
                         ? normalizeCourse(curriculum)
                         : null);
 
-                const typedCurriculum = curriculum as CourseCurriculum;
-                let mods: any[] =
-                    typedCurriculum?.modules ??
-                    (Array.isArray(curriculum) ? curriculum : []);
+                // Map learning/course format to internal Module interface
+                let mods: any[] = [];
+                if (curriculum && typeof curriculum === "object" && Array.isArray((curriculum as any).modules)) {
+                    mods = (curriculum as any).modules.map((m: any) => ({
+                        id: m.id,
+                        title: m.title,
+                        order_index: m.position,
+                        content_chunks: (m.lessons ?? []).map((l: any) => ({
+                            id: l.id,
+                            title: l.title,
+                            duration_minutes: l.estimated_minutes
+                        }))
+                    }));
+                } else if (Array.isArray(curriculum)) {
+                    mods = curriculum;
+                }
 
                 // Use the curriculum response to populate the course if the list didn't have it
                 const finalCourse = derivedCourse ?? (
@@ -193,58 +204,16 @@ function CourseDetailPage() {
         };
     }, [courseId]);
 
-    useEffect(() => {
-        let alive = true;
-        if (!courseId || resumeSessionId) return;
 
-        aiTutorApi
-            .get("/api/v1/learning/sessions")
-            .then((res) => {
-                if (!alive) return;
-                const data = unwrapApiData<unknown>(res.data);
-                const sessionList = Array.isArray(data)
-                    ? data
-                    : ((data as { sessions?: unknown[] } | null)?.sessions ?? []);
-                const matched = (sessionList as SessionRow[]).find((session) => {
-                    const id = String(session.course_id ?? (session as any).courseId ?? "");
-                    return id === String(courseId) && !isEndedSession(session.status);
-                });
-                if (matched) {
-                    const sessionId = matched.session_id ?? matched.id ?? null;
-                    if (sessionId) {
-                        setResumeSessionId(String(sessionId));
-                    }
-                }
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!alive) return;
-            });
-
-        return () => {
-            alive = false;
-        };
-    }, [courseId, resumeSessionId]);
     const startLearning = async () => {
         setStarting(true);
         try {
-            if (resumeSessionId) {
-                setSession({
-                    sessionId: resumeSessionId,
-                    courseId: String(courseId),
-                    subjectId: coerceIntegerId(courseId) ?? Number(courseId),
-                });
-                navigate({
-                    to: "/learn/$sessionId",
-                    params: { sessionId: resumeSessionId },
-                });
-                return;
-            }
+
             const numericCourseId = coerceIntegerId(courseId) ?? Number(courseId);
             const subjectId = numericCourseId;
 
             const res = await aiTutorApi.post(
-                "/api/v1/learning/sessions/start",
+                "/api/v1/ai/session/start",
                 {},
                 {
                     params: {
@@ -355,8 +324,6 @@ function CourseDetailPage() {
                                 >
                                         {starting
                                         ? "Starting..."
-                                        : resumeSessionId
-                                        ? "Resume learning"
                                         : "Start learning"}
                                 </button>
 

@@ -47,12 +47,12 @@ describe("requireTutor", () => {
   });
 
   it("throws when logged in but not TUTOR", () => {
-    resetStore({ isLoggedIn: true, user: { email: "a@b.com", userType: "LEARNER" } });
+    resetStore({ isLoggedIn: true, user: { email: "a@b.com", roles: ["solo_learner"] } });
     expect(() => requireTutor()).toThrow("REDIRECT");
   });
 
   it("does not throw when user is TUTOR", () => {
-    resetStore({ isLoggedIn: true, user: { email: "t@b.com", userType: "TUTOR" } });
+    resetStore({ isLoggedIn: true, user: { email: "t@b.com", roles: ["tutor_author"] } });
     expect(() => requireTutor()).not.toThrow();
   });
 });
@@ -66,12 +66,12 @@ describe("requireOrgAdmin", () => {
   });
 
   it("throws when logged in but not ORG_ADMIN", () => {
-    resetStore({ isLoggedIn: true, user: { email: "a@b.com", userType: "LEARNER" } });
+    resetStore({ isLoggedIn: true, user: { email: "a@b.com", roles: ["solo_learner"] } });
     expect(() => requireOrgAdmin()).toThrow("REDIRECT");
   });
 
   it("does not throw when user is ORG_ADMIN", () => {
-    resetStore({ isLoggedIn: true, user: { email: "o@b.com", userType: "ORG_ADMIN" } });
+    resetStore({ isLoggedIn: true, user: { email: "o@b.com", roles: ["enterprise_admin"] } });
     expect(() => requireOrgAdmin()).not.toThrow();
   });
 });
@@ -80,12 +80,12 @@ describe("requireOrgAdmin", () => {
 
 describe("redirectIfLoggedIn", () => {
   it("throws a redirect when already logged in as LEARNER", () => {
-    resetStore({ isLoggedIn: true, user: { email: "l@b.com", userType: "LEARNER" } });
+    resetStore({ isLoggedIn: true, user: { email: "l@b.com", roles: ["solo_learner"] } });
     expect(() => redirectIfLoggedIn()).toThrow("REDIRECT");
   });
 
   it("throws a redirect when already logged in as TUTOR", () => {
-    resetStore({ isLoggedIn: true, user: { email: "t@b.com", userType: "TUTOR" } });
+    resetStore({ isLoggedIn: true, user: { email: "t@b.com", roles: ["tutor_author"] } });
     expect(() => redirectIfLoggedIn()).toThrow("REDIRECT");
   });
 

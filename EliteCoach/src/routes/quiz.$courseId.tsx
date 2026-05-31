@@ -11,6 +11,9 @@ import {
     normalizeCourse,
     notificationsApi,
     unwrapApiData,
+    unwrapApiList,
+    downloadCertificate,
+    getLinkedInShareUrl,
 } from "@/lib/api-client";
 import { TopNav } from "@/components/TopNav";
 import { useAuthStore } from "@/lib/stores";
@@ -50,7 +53,9 @@ function parseQuestions(payload: unknown): Question[] {
             if (!item || typeof item !== "object") return null;
             const value = item as Record<string, unknown>;
             const prompt =
-                typeof value.question === "string"
+                typeof value.question_text === "string"
+                    ? value.question_text
+                    : typeof value.question === "string"
                     ? value.question
                     : typeof value.prompt === "string"
                       ? value.prompt
@@ -59,6 +64,8 @@ function parseQuestions(payload: unknown): Question[] {
                 ? value.options.filter(
                       (option): option is string => typeof option === "string"
                   )
+                : value.options && typeof value.options === "object" 
+                    ? Object.values(value.options).filter((option): option is string => typeof option === "string")
                 : [];
 
             if (!prompt) return null;
@@ -109,12 +116,13 @@ function QuizPage() {
     const [idx, setIdx] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
+    const [attemptId, setAttemptId] = useState<string | null>(null);
     const [timeLeft, setTimeLeft] = useState<number | null>(null);
     const [result, setResult] = useState<{
         score: number;
         total: number;
         passed?: boolean;
-        perQuestion?: { id: string; correct: boolean }[];
+        reinforcementLessons?: string[] | null;
     } | null>(null);
     const [showConfig, setShowConfig] = useState(true);
     const [configLevel, setConfigLevel] = useState(searchLevel || "beginner");
@@ -130,6 +138,7 @@ function QuizPage() {
         pdf_url: string;
         linkedin_share_url?: string;
     } | null>(null);
+    const [lessonTitles, setLessonTitles] = useState<Record<string, string>>({});
 
     useEffect(() => {
         if (!startFetch) return;
@@ -160,33 +169,45 @@ function QuizPage() {
         }
 
         contentApi
-            .get(`/courses/${numericCourseId}/curriculum`)
+            .get(`/api/v1/learning/course/${numericCourseId}`)
             .then((curriculumRes) => {
                 if (!alive) return;
                 const curriculumData = curriculumRes.data
                     ? unwrapApiData<any>(curriculumRes.data)
                     : null;
+                
+                if (curriculumData) {
+                    const rawMods = Array.isArray(curriculumData)
+                        ? curriculumData
+                        : (curriculumData.modules ?? []);
+                    const titlesMap: Record<string, string> = {};
+                    rawMods.forEach((m: any) => {
+                        const lessonsList = m.lessons ?? m.content_chunks ?? [];
+                        lessonsList.forEach((l: any) => {
+                            if (l.id) {
+                                titlesMap[String(l.id)] = l.title || `Lesson ${l.id}`;
+                            }
+                        });
+                    });
+                    setLessonTitles(titlesMap);
+                }
+
                 const matchedCourse = curriculumData
                     ? normalizeCourse(curriculumData)
                     : null;
 
                 const topic = matchedCourse?.title ?? "Course assessment";
 
-                return assessmentsApi.post(
-                    "/api/v1/assessments/generate-quiz",
-                    null,
-                    {
-                        params: {
-                            course_id: numericCourseId,
-                            topic: topic,
-                            num_questions: configCount,
-                            level: configLevel,
-                        },
-                    }
+                return assessmentsApi.get(
+                    `/api/v1/assessments/course/${numericCourseId}/final`
                 );
             })
             .then((quizRes) => {
                 if (!alive || !quizRes) return;
+                const payload = unwrapApiData<any>(quizRes.data);
+                if (payload?.attempt_id) setAttemptId(payload.attempt_id);
+                else if (payload?.id) setAttemptId(payload.id);
+                
                 const data = parseQuestions(quizRes.data);
                 if (data.length === 0) {
                     setQuestions([
@@ -253,63 +274,31 @@ function QuizPage() {
                 throw new Error("This quiz requires a numeric course ID.");
             }
 
-            const res = await acsApi.post("/v1/assessment/quiz/submit-inline", {
-                user_id: user?.id || user?.email || "unknown",
-                course_id: numericCourseId,
-                skill_domain: "General",
-                questions: questions.map((q) => ({
-                    id: q.id,
-                    correct_answer: q.correct_answer || "",
-                })),
-                submitted_answers: answers,
-                max_score: 100,
-                pass_score: 70,
-                tutor_assessment_id: numericCourseId,
+            if (!attemptId) {
+                throw new Error("Missing attempt ID for final exam.");
+            }
+
+            const res = await assessmentsApi.post(`/api/v1/assessments/attempt/${attemptId}/submit`, {
+                answers: questions.map((q) => ({
+                    question_id: q.id,
+                    answer: answers[q.id] || "",
+                }))
             });
-            const payload = unwrapApiData<unknown>(res.data);
+            const payload = unwrapApiData<any>(res.data);
             const result = typeof payload === "object" ? payload : {};
             const score = Number((result as any).score ?? 0);
-            const passed = Boolean((result as any).passed ?? score >= 70);
-
-            const per: { id: string; correct: boolean }[] = questions.map(
-                (q) => ({
-                    id: q.id,
-                    correct: answers[q.id] === q.correct_answer,
-                })
-            );
+            const passed = Boolean((result as any).is_passed ?? (result as any).passed ?? score >= 70);
+            const reinforcementLessons = (result as any).reinforcement_lessons;
 
             setResult({
                 score,
                 total: questions.length,
                 passed,
-                perQuestion: per,
+                reinforcementLessons,
             });
-            notificationsApi
-                .post(
-                    "/api/v1/notification/send",
-                    buildNotificationPayload({
-                        to: user?.email,
-                        subject: "Quiz complete",
-                        body: `You scored ${typeof score === "number" ? score : 0}%`,
-                    })
-                )
-                .catch(() => {});
         } catch (err) {
-            const correct = questions.filter(
-                (q) => answers[q.id] === q.correct_answer
-            ).length;
-            const score = Math.round((correct / questions.length) * 100);
-            setResult({
-                score,
-                total: questions.length,
-                passed: score >= 70,
-                perQuestion: questions.map((q) => ({
-                    id: q.id,
-                    correct: answers[q.id] === q.correct_answer,
-                })),
-            });
             toast.error(
-                extractErrorMessage(err, "Could not submit, scored locally")
+                extractErrorMessage(err, "Could not submit assessment")
             );
         } finally {
             setSubmitting(false);
@@ -335,23 +324,24 @@ function QuizPage() {
 
             const userId = user.id || user.email || "unknown";
             const res = await acsApi.get(
-                `/v1/assessment/certificates/${userId}`,
-                {
-                    params: {
-                        course_id: numericCourseId,
-                    },
-                }
+                `/api/v1/certificates/me`
             );
 
-            const certData = unwrapApiData<any>(res.data);
+            const certList = unwrapApiList<any>(res.data);
+            const certData = certList.find((c) => String(c.course_id) === String(numericCourseId) || c.course_title?.includes("Final")) || certList[0];
+
+            if (!certData) {
+                throw new Error("Certificate not found for this course.");
+            }
+
             setCertificate({
                 id: certData.id,
-                verification_code: certData.verification_code,
+                verification_code: certData.verification_code || certData.id,
                 pdf_url: certData.pdf_url,
                 linkedin_share_url: certData.linkedin_share_url,
             });
 
-            toast.success("Certificate generated successfully!");
+            toast.success("Certificate fetched successfully!");
 
             if (certData.pdf_url) {
                 window.open(certData.pdf_url, "_blank");
@@ -372,28 +362,42 @@ function QuizPage() {
         }
     };
 
-    const forceDownload = async (e: React.MouseEvent<HTMLAnchorElement>) => {
+    const forceDownload = async (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
+        if (!certificate?.id) return;
         
-        if (!certificate?.pdf_url) return;
-
         try {
-            const response = await fetch(certificate.pdf_url);
-            const blob = await response.blob();
-            
-            const blobUrl = window.URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = blobUrl;
-            
-            link.download = `EliteCoach_Certificate.pdf`;
-            
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            window.URL.revokeObjectURL(blobUrl);
+            const downloadUrl = await downloadCertificate(certificate.id);
+            if (downloadUrl) {
+                const link = document.createElement("a");
+                link.href = downloadUrl;
+                link.download = `EliteCoach_Certificate_${certificate.verification_code || "EC"}.pdf`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            } else {
+                // Fallback
+                if (certificate.pdf_url) window.open(certificate.pdf_url, "_blank");
+            }
         } catch (err) {
-            console.error("Failed to force download, falling back to new tab", err);
-            window.open(certificate.pdf_url, "_blank");
+            console.error("Failed to fetch signed download url", err);
+            if (certificate.pdf_url) window.open(certificate.pdf_url, "_blank");
+        }
+    };
+
+    const shareLinkedIn = async (e: React.MouseEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        if (!certificate?.id) return;
+        try {
+            const shareUrl = await getLinkedInShareUrl(certificate.id);
+            if (shareUrl) {
+                window.open(shareUrl, "_blank", "noopener,noreferrer");
+            } else {
+                if (certificate.linkedin_share_url) window.open(certificate.linkedin_share_url, "_blank");
+            }
+        } catch (err) {
+            console.error("Failed to fetch share url", err);
+            if (certificate.linkedin_share_url) window.open(certificate.linkedin_share_url, "_blank");
         }
     };
 
@@ -534,31 +538,27 @@ function QuizPage() {
                         </p>
                     </div>
 
-                    <div className="card-base mt-6">
-                        <h3 className="font-semibold mb-4">Per-question breakdown</h3>
-                        <div className="divide-y divide-border">
-                            {(result.perQuestion ?? []).map((p, i) => {
-                                const q = questions.find((qq) => qq.id === p.id);
-                                return (
-                                    <div key={p.id} className="py-3 flex items-start gap-3">
-                                        <span className={`w-6 h-6 flex items-center justify-center shrink-0 ${
-                                            p.correct ? "bg-success text-white" : "bg-destructive text-white"
-                                        }`}>
-                                            {p.correct ? <Check size={14} /> : <X size={14} />}
-                                        </span>
-                                        <div className="text-sm">
-                                            <div className="font-medium">
-                                                Q{i + 1}. {q?.question ?? "Question"}
-                                            </div>
-                                            <div className="text-text-secondary text-xs mt-1">
-                                                Your answer: {answers[p.id] ?? "—"}
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                    {result.reinforcementLessons && result.reinforcementLessons.length > 0 && (
+                        <div className="card-base mt-6 bg-yellow-50 border-yellow-200 border">
+                            <h3 className="font-semibold mb-4 text-yellow-800">Review Required</h3>
+                            <p className="text-sm mb-4 text-yellow-700">
+                                You need to review the following lessons before you can retake the quiz:
+                            </p>
+                            <ul className="list-disc pl-5 text-sm space-y-2 text-yellow-800">
+                                {result.reinforcementLessons.map((lessonId) => (
+                                    <li key={lessonId}>
+                                        <Link 
+                                            to="/learn/$sessionId" 
+                                            params={{ sessionId: String(lessonId) }} 
+                                            className="underline hover:text-yellow-600 font-semibold"
+                                        >
+                                            {lessonTitles[String(lessonId)] || `Lesson ${lessonId}`}
+                                        </Link>
+                                    </li>
+                                ))}
+                            </ul>
                         </div>
-                    </div>
+                    )}
 
                     {certificate && (
                         <div className="bg-success/10 border border-success/30 rounded-lg p-6 mt-8">
@@ -566,23 +566,19 @@ function QuizPage() {
                             <p className="text-sm text-text-secondary mb-4">
                                 Verification Code: <code className="font-mono text-xs bg-surface-card px-2 py-1 rounded">{certificate.verification_code}</code>
                             </p>
-                            <div className="flex gap-2">
-                                {certificate.pdf_url && (
-                                    <a 
-                                        href={certificate.pdf_url} 
-                                        onClick={forceDownload}
-                                        target="_blank" 
-                                        rel="noopener noreferrer" 
-                                        className="flex-1 h-10 inline-flex items-center justify-center bg-success text-white font-medium rounded hover:opacity-90 transition-opacity text-sm"
-                                    >
-                                        Download PDF
-                                    </a>
-                                )}
-                                {certificate.linkedin_share_url && (
-                                    <a href={certificate.linkedin_share_url} target="_blank" rel="noopener noreferrer" className="flex-1 h-10 inline-flex items-center justify-center bg-blue-600 text-white font-medium rounded hover:opacity-90 transition-opacity text-sm">
-                                        Share on LinkedIn
-                                    </a>
-                                )}
+                            <div className="flex gap-2 mt-4">
+                                <button 
+                                    onClick={forceDownload}
+                                    className="flex-1 h-10 inline-flex items-center justify-center bg-success text-white font-medium rounded hover:opacity-90 transition-opacity text-sm cursor-pointer"
+                                >
+                                    Download PDF
+                                </button>
+                                <button 
+                                    onClick={shareLinkedIn}
+                                    className="flex-1 h-10 inline-flex items-center justify-center bg-blue-600 text-white font-medium rounded hover:opacity-90 transition-opacity text-sm cursor-pointer"
+                                >
+                                    Share on LinkedIn
+                                </button>
                             </div>
                         </div>
                     )}
@@ -607,7 +603,8 @@ function QuizPage() {
                                 setIdx(0);
                                 setCertificate(null);
                             }}
-                            className="flex-1 h-12 border border-border font-medium hover:bg-surface transition-colors"
+                            disabled={!!(result.reinforcementLessons && result.reinforcementLessons.length > 0)}
+                            className="flex-1 h-12 border border-border font-medium hover:bg-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Retake quiz
                         </button>

@@ -11,9 +11,13 @@ import {
     unwrapApiData,
     escalateSessionToTutor,
     fetchInlineKnowledgeChecks,
-    generateModuleAssessment,
+    getModuleAssessment,
+    startAssessment,
+    submitAssessmentAttempt,
+    completeLesson,
+    startLessonSession,
     type KnowledgeCheck,
-    type ModuleAssessment,
+    type AssessmentStartData,
 } from "@/lib/api-client";
 import { useAuthStore, useSessionStore } from "@/lib/stores";
 import { toast } from "sonner";
@@ -99,10 +103,14 @@ function LearningRoomPage() {
     const [kcAnswers, setKcAnswers] = useState<Record<string, string>>({});
     const [kcPassed, setKcPassed] = useState(false);
 
+    const [localSessionId, setLocalSessionId] = useState<string | null>(null);
+    const [loadedLessonContent, setLoadedLessonContent] = useState<any>(null);
+
     // Module Assessments
-    const [moduleAssessment, setModuleAssessment] = useState<ModuleAssessment | null>(null);
+    const [moduleAssessment, setModuleAssessment] = useState<AssessmentStartData | null>(null);
     const [maAnswers, setMaAnswers] = useState<Record<string, string>>({});
     const [maResult, setMaResult] = useState<{ score: number, passed: boolean } | null>(null);
+    const [isSubmittingMa, setIsSubmittingMa] = useState(false);
 
     useEffect(() => {
         if (!sessionId) return;
@@ -118,6 +126,40 @@ function LearningRoomPage() {
         }
     }, [sessionId]);
 
+    useEffect(() => {
+        if (!escalated) return;
+        let active = true;
+        
+        const pollStatus = async () => {
+            const activeSessionId = localSessionId || sessionId;
+            if (!activeSessionId) return;
+            try {
+                const res = await aiTutorApi.get(`/api/v1/ai/session/${activeSessionId}/escalation-status`);
+                const payload = unwrapApiData<{status: string, resolution_detail?: string}>(res.data);
+                if (payload?.status === "resolved" && active) {
+                    setEscalated(false);
+                    if (payload.resolution_detail) {
+                        addMessage({
+                            id: crypto.randomUUID(),
+                            role: "assistant",
+                            content: `**Tutor Response:**\n\n${payload.resolution_detail}`,
+                            ts: Date.now(),
+                        });
+                        toast.success("Your tutor has responded!");
+                    }
+                }
+            } catch (e) {
+                console.error("Polling error", e);
+            }
+        };
+
+        const intervalId = setInterval(pollStatus, 30000);
+        return () => {
+            active = false;
+            clearInterval(intervalId);
+        };
+    }, [escalated, localSessionId, sessionId, addMessage]);
+
     const triggerEscalation = async (reason: string) => {
         if (escalated) return;
         setEscalated(true);
@@ -126,8 +168,9 @@ function LearningRoomPage() {
         const courseTitle = currentModule?.title ?? "General Subject";
 
         try {
-            await escalateSessionToTutor(
-                String(sessionId),
+            const activeSessionId = localSessionId || sessionId;
+            const success = await escalateSessionToTutor(
+                activeSessionId,
                 learnerName,
                 learnerEmail,
                 courseTitle,
@@ -146,81 +189,33 @@ function LearningRoomPage() {
         }
     };
 
-    const triggerManualEscalation = async () => {
-        addMessage({
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: "⚠️ *System: Initiating human tutor escalation at user's request. Tutors have been notified.*",
-            ts: Date.now(),
-        });
-        await triggerEscalation("Learner manually requested human tutor assistance.");
-    };
-
     useEffect(() => {
         if (!courseId) return;
         contentApi
-            .get(`/courses/${courseId}/curriculum`)
+            .get(`/api/v1/learning/course/${courseId}`)
             .then((res) => {
-                const payload = unwrapApiData<unknown>(res.data);
+                const payload = unwrapApiData<any>(res.data);
                 const rawMods = Array.isArray(payload)
                     ? payload
-                    : ((payload as { modules?: Module[] } | null)?.modules ??
-                      []);
-                // If a module has no content_chunks, synthesize one from the module itself
-                // so the navigation always has something to show
+                    : ((payload as any)?.modules ?? []);
+                
                 const normalized = rawMods.map((m: any) => ({
-                    ...m,
-                    content_chunks:
-                        m.content_chunks && m.content_chunks.length > 0
-                            ? m.content_chunks
-                            : [{ id: m.id, title: m.title, content: m.content ?? undefined }],
+                    id: m.id,
+                    title: m.title,
+                    order_index: m.position,
+                    content_chunks: (m.lessons ?? []).map((l: any) => ({
+                        id: l.id,
+                        title: l.title,
+                        duration_minutes: l.estimated_minutes,
+                        status: l.status,
+                    }))
                 }));
                 setModules(normalized);
             })
             .catch(() => {});
     }, [courseId]);
 
-    useEffect(() => {
-        let alive = true;
-        if (!sessionId) return;
-        if (sessionId === currentSessionId && courseId) return;
 
-        aiTutorApi
-            .get("/api/v1/learning/sessions")
-            .then((res) => {
-                if (!alive) return;
-                const data = unwrapApiData<unknown>(res.data);
-                const sessionList = Array.isArray(data)
-                    ? data
-                    : ((data as { sessions?: unknown[] } | null)?.sessions ?? []);
-                const matched = (sessionList as any[]).find((session) => {
-                    const id = String(session.id ?? session.session_id ?? "");
-                    return id === String(sessionId);
-                });
-                if (matched) {
-                    const foundCourseId = String(
-                        matched.course_id ?? (matched as any).courseId ?? ""
-                    );
-                    const foundSubjectId =
-                        coerceIntegerId((matched as any).subject_id ?? matched.subject_id) ??
-                        coerceIntegerId(foundCourseId);
-                    if (foundCourseId) {
-                        setSession({
-                            sessionId: String(sessionId),
-                            courseId: foundCourseId,
-                            subjectId: foundSubjectId,
-                        });
-                    }
-                }
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!alive) return;
-            });
-        return () => {
-            alive = false;
-        };
-    }, [sessionId, currentSessionId, courseId, setSession]);
 
     useEffect(() => {
         if (chatRef.current)
@@ -230,9 +225,13 @@ function LearningRoomPage() {
     const currentModule = modules[activeModule];
     const currentLesson = currentModule?.content_chunks?.[activeLesson];
 
-    const embeddedVideoUrl = currentLesson?.content
-        ? getEmbeddedVideoUrl(currentLesson.content)
-        : null;
+    // Combine content from API docs: block_type: text -> content.html
+    const lessonTextContent = loadedLessonContent?.content_blocks?.filter((b:any)=>b.block_type==="text").map((b:any)=>b.content?.html).join('\n') || currentLesson?.content;
+    const lessonVideoBlock = loadedLessonContent?.content_blocks?.find((b:any)=>b.block_type==="video");
+
+    const embeddedVideoUrl = lessonVideoBlock?.content?.url
+        ? getEmbeddedVideoUrl(lessonVideoBlock.content.url)
+        : (lessonTextContent ? getEmbeddedVideoUrl(lessonTextContent) : null);
 
     const totalLessons = modules.reduce(
         (sum, m) => sum + (m.content_chunks?.length ?? 0),
@@ -250,19 +249,41 @@ function LearningRoomPage() {
         activeLesson ===
             (modules[activeModule]?.content_chunks?.length ?? 0) - 1;
 
-    const markComplete = () => {
-        setCompleted((prev) =>
-            new Set(prev).add(lessonKey(activeModule, activeLesson))
-        );
-        toast.success("Lesson marked complete");
+    const markComplete = async () => {
+        if (!currentLesson?.id) return;
+        try {
+            await completeLesson(currentLesson.id);
+            setCompleted((prev) =>
+                new Set(prev).add(lessonKey(activeModule, activeLesson))
+            );
+            toast.success("Lesson marked complete");
+        } catch (e) {
+            toast.error("Failed to mark lesson as complete on backend. Still marking locally.");
+            setCompleted((prev) =>
+                new Set(prev).add(lessonKey(activeModule, activeLesson))
+            );
+        }
     };
 
     useEffect(() => {
-        if (!currentLesson) return;
+        if (!currentLesson?.id) return;
+
+        setLoadedLessonContent(null);
+        startLessonSession(currentLesson.id)
+            .then(data => {
+                if (data && data.session_id) {
+                    setLocalSessionId(data.session_id);
+                }
+                if (data && data.lesson) {
+                    setLoadedLessonContent(data.lesson);
+                }
+            })
+            .catch(e => console.error("Failed to start session on backend", e));
+
         setKnowledgeChecks([]);
         setKcAnswers({});
         setKcPassed(false);
-        fetchInlineKnowledgeChecks(currentLesson.id ?? "unknown", currentLesson.title)
+        fetchInlineKnowledgeChecks(currentLesson.id, currentLesson.title)
             .then(kcs => {
                 setKnowledgeChecks(kcs);
                 if (kcs.length === 0) setKcPassed(true);
@@ -284,31 +305,46 @@ function LearningRoomPage() {
         if (activeLesson < lessons.length - 1) {
             setActiveLesson(activeLesson + 1);
         } else if (activeModule < modules.length - 1) {
-            const ma = await generateModuleAssessment(currentModule.id, currentModule.title);
-            setModuleAssessment(ma);
-            setMaAnswers({});
-            setMaResult(null);
+            try {
+                const meta = await getModuleAssessment(currentModule.id);
+                if (meta.assessment_id) {
+                    const startData = await startAssessment(meta.assessment_id);
+                    setModuleAssessment(startData);
+                    setMaAnswers({});
+                    setMaResult(null);
+                } else {
+                    toast.error("No module assessment found.");
+                }
+            } catch (e) {
+                toast.error("Could not load module assessment.");
+            }
         }
     };
 
-    const submitModuleAssessment = () => {
-        if (!moduleAssessment) return;
-        let correct = 0;
-        moduleAssessment.questions.forEach(q => {
-            if (maAnswers[q.id] === q.correctAnswer) correct++;
-        });
-        const score = Math.round((correct / moduleAssessment.questions.length) * 100);
-        const passed = score >= 70;
-        setMaResult({ score, passed });
-        if (passed) {
-            toast.success("Module Assessment passed! Unlocking next module.");
-            setTimeout(() => {
-                setModuleAssessment(null);
-                setActiveModule(activeModule + 1);
-                setActiveLesson(0);
-            }, 2500);
-        } else {
-            toast.error("You need 70% to pass. Please review the material and try again.");
+    const submitModuleAssessment = async () => {
+        if (!moduleAssessment || !moduleAssessment.attempt_id) return;
+        setIsSubmittingMa(true);
+        try {
+            const answersArray = moduleAssessment.questions.map(q => ({
+                question_id: q.id,
+                answer: maAnswers[q.id] || ""
+            }));
+            const res = await submitAssessmentAttempt(moduleAssessment.attempt_id, answersArray);
+            setMaResult({ score: res.score, passed: res.is_passed });
+            if (res.is_passed) {
+                toast.success("Module Assessment passed! Unlocking next module.");
+                setTimeout(() => {
+                    setModuleAssessment(null);
+                    setActiveModule(activeModule + 1);
+                    setActiveLesson(0);
+                }, 2500);
+            } else {
+                toast.error("You need 70% to pass. Please review the material and try again.");
+            }
+        } catch(e) {
+            toast.error(extractErrorMessage(e, "Failed to submit assessment"));
+        } finally {
+            setIsSubmittingMa(false);
         }
     };
 
@@ -391,9 +427,10 @@ function LearningRoomPage() {
             ts: Date.now(),
         });
         setSending(true);
+        const activeSessionId = localSessionId || sessionId;
         try {
             const res = await aiTutorApi.post(
-                `/api/v1/learning/sessions/${sessionId}/message`,
+                `/api/v1/ai/session/${activeSessionId}/message`,
                 {
                     message: text,
                     subject_id: subjectId,
@@ -462,10 +499,10 @@ function LearningRoomPage() {
     };
 
     const endSession = async () => {
+        const activeSessionId = localSessionId || sessionId;
         try {
-            const res = await aiTutorApi.post(
-                `/api/v1/learning/sessions/${sessionId}/end`,
-                {}
+            const res = await aiTutorApi.get(
+                `/api/v1/ai/session/${activeSessionId}/summary`
             );
             const payload = unwrapApiData<unknown>(res.data);
             const summary = (() => {
@@ -516,16 +553,7 @@ function LearningRoomPage() {
             setShowSummary(
                 typeof summary === "string" ? summary : JSON.stringify(summary)
             );
-            notificationsApi
-                .post(
-                    "/api/v1/notification/send",
-                    buildNotificationPayload({
-                        to: user?.email,
-                        subject: "Session ended",
-                        body: "Great session! Here's your summary.",
-                    })
-                )
-                .catch(() => {});
+
         } catch (err) {
             toast.error(extractErrorMessage(err, "Could not end session"));
         }
@@ -637,7 +665,7 @@ function LearningRoomPage() {
         <div className="flex flex-col h-full bg-surface-card overflow-hidden">
             <div className="flex items-center justify-between px-8 py-4 border-b border-border bg-primary text-primary-foreground">
                 <div className="text-sm font-bold truncate">
-                    {moduleAssessment.title}
+                    {moduleAssessment.assessment?.title ?? "Module Assessment"}
                 </div>
                 <button onClick={() => setModuleAssessment(null)} className="opacity-80 hover:opacity-100">
                     <X size={20} />
@@ -655,11 +683,15 @@ function LearningRoomPage() {
                     )}
                     <h2 className="text-2xl font-bold mb-6">Module Assessment</h2>
                     <div className="space-y-8">
-                        {moduleAssessment.questions.map((q, i) => (
+                        {moduleAssessment.questions.map((q, i) => {
+                            const optionsArray = Array.isArray(q.options) 
+                                ? q.options 
+                                : (q.options ? Object.values(q.options) : []);
+                            return (
                             <div key={q.id} className="bg-white p-6 rounded-lg shadow-sm border border-border">
-                                <p className="font-semibold mb-4 text-lg">{i + 1}. {q.question}</p>
+                                <p className="font-semibold mb-4 text-lg">{i + 1}. {q.question_text}</p>
                                 <div className="space-y-3">
-                                    {q.options.map(opt => {
+                                    {optionsArray.map((opt: any) => {
                                         const isSel = maAnswers[q.id] === opt;
                                         return (
                                             <label key={opt} className={`flex items-center gap-3 p-4 border rounded cursor-pointer transition-colors ${isSel ? 'border-primary bg-primary/5' : 'border-border hover:bg-slate-50'}`}>
@@ -676,17 +708,17 @@ function LearningRoomPage() {
                                     })}
                                 </div>
                             </div>
-                        ))}
+                        )})}
                     </div>
                 </div>
             </div>
             <div className="border-t border-border px-8 py-4 flex items-center justify-end bg-surface-card">
                 <button
                     onClick={submitModuleAssessment}
-                    disabled={Object.keys(maAnswers).length !== moduleAssessment.questions.length || maResult !== null}
+                    disabled={Object.keys(maAnswers).length !== moduleAssessment.questions.length || maResult !== null || isSubmittingMa}
                     className="h-11 px-6 bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors disabled:opacity-50"
                 >
-                    Submit Assessment
+                    {isSubmittingMa ? "Submitting..." : "Submit Assessment"}
                 </button>
             </div>
         </div>
@@ -727,10 +759,8 @@ function LearningRoomPage() {
                             </div>
                         ) : null}
                         <div className="prose prose-sm max-w-none text-text-primary leading-relaxed">
-                            {currentLesson.content ? (
-                                <ReactMarkdown>
-                                    {currentLesson.content}
-                                </ReactMarkdown>
+                            {lessonTextContent ? (
+                                <div dangerouslySetInnerHTML={{ __html: lessonTextContent }} />
                             ) : (
                                 <div className="text-center py-12">
                                     <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
@@ -860,14 +890,7 @@ function LearningRoomPage() {
                         </div>
                     </div>
                 </div>
-                {!escalated && (
-                    <button
-                        onClick={triggerManualEscalation}
-                        className="text-xs font-semibold text-coral border border-coral/30 px-2.5 py-1 rounded hover:bg-coral/5 transition-colors cursor-pointer"
-                    >
-                        Ask Human
-                    </button>
-                )}
+
             </div>
 
             <div
@@ -945,7 +968,7 @@ function LearningRoomPage() {
                             className="flex-1 h-11 px-3 border border-border focus:border-primary outline-none text-sm bg-white"
                         />
                         <button
-                            onClick={sendMessage}
+                            onClick={() => sendMessage()}
                             disabled={sending || !input.trim()}
                             className="h-11 w-11 bg-primary text-primary-foreground hover:bg-primary-hover transition-colors flex items-center justify-center disabled:opacity-50 cursor-pointer"
                         >
