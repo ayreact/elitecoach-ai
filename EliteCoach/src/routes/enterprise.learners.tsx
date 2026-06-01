@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { requireOrgAdmin } from "@/lib/auth-guard";
-import { useOrgStore } from "@/lib/stores";
+
 import { useRef, useState, DragEvent, useEffect } from "react";
 import { TopNav } from "@/components/TopNav";
 import { OrgTabs } from "@/components/OrgTabs";
@@ -16,17 +16,15 @@ import { useAuthStore } from "@/lib/stores";
 import { toast } from "sonner";
 import { Upload, Plus, X, Users, Shield, BookOpen } from "lucide-react";
 
-export const Route = createFileRoute("/org/$orgId/learners")({
-  beforeLoad: ({ params }) => {
+export const Route = createFileRoute("/enterprise/learners")({
+  beforeLoad: () => {
     requireOrgAdmin();
-    useOrgStore.getState().setOrg({ organizationId: params.orgId });
   },
   head: () => ({ meta: [{ title: "Manage learners — EliteCoach" }] }),
   component: ManageLearnersPage,
 });
 
 function ManageLearnersPage() {
-  const { orgId } = Route.useParams();
   const user = useAuthStore((s) => s.user);
   const [activeTab, setActiveTab] = useState<"learners" | "teams" | "assignments" | "import">("learners");
 
@@ -92,7 +90,7 @@ function ManageLearnersPage() {
 
   useEffect(() => {
     fetchData();
-  }, [orgId]);
+  }, []);
 
   // Actions
   const handleDeactivate = async (userId: string) => {
@@ -226,7 +224,7 @@ function ManageLearnersPage() {
   return (
     <div className="min-h-screen flex flex-col bg-surface">
       <TopNav />
-      <OrgTabs orgId={orgId} />
+      <OrgTabs />
       <div className="container-1200 py-12 flex-1">
         <div className="flex items-end justify-between mb-8 flex-wrap gap-4">
           <div>

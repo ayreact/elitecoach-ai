@@ -26,8 +26,7 @@ export function requireLearner() {
     }
   }
   if (isOrgAdmin) {
-    const orgId = String(user?.organizationId ?? "unknown");
-    throw redirect({ to: "/org/$orgId/dashboard", params: { orgId } });
+    throw redirect({ to: "/enterprise/dashboard" });
   }
   // Treat undefined/null/empty userType as LEARNER (the default role)
 }
@@ -85,8 +84,7 @@ export function redirectIfLoggedIn() {
         throw redirect({ to: "/tutor/inbox" });
       }
     } else if (isOrgAdmin) {
-      const orgId = String(user?.organizationId ?? "unknown");
-      throw redirect({ to: "/org/$orgId/dashboard", params: { orgId } });
+      throw redirect({ to: "/enterprise/dashboard" });
     } else {
       throw redirect({ to: "/dashboard" });
     }

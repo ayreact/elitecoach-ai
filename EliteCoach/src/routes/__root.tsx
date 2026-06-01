@@ -110,9 +110,13 @@ function RootComponent() {
         identityApi
             .get("/api/v1/auth/me")
             .then((res) => {
-                const data = unwrapApiData<AuthUser>(res.data);
-                if (data && data.email) {
-                    setUser({ ...user, ...data });
+                const rawData = unwrapApiData<any>(res.data);
+                if (rawData && rawData.email) {
+                    const mappedData = {
+                        ...rawData,
+                        organizationId: rawData.org_id || rawData.organizationId || rawData.orgId,
+                    };
+                    setUser({ ...useAuthStore.getState().user, ...mappedData } as AuthUser);
                 }
             })
             .catch((err) => {
@@ -120,7 +124,7 @@ function RootComponent() {
                     logout();
                 }
             });
-    }, [isLoggedIn, logout, setUser, user]);
+    }, [isLoggedIn, logout, setUser]);
 
     return (
         <>

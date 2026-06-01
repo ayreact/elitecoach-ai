@@ -57,26 +57,6 @@ registerAuthSetter((accessToken, refreshToken) => {
   useAuthStore.setState({ accessToken, refreshToken });
 });
 
-interface OrgState {
-  organizationId: string | null;
-  planTier: string | null;
-  setOrg: (data: {
-    organizationId: string | null;
-    planTier?: string | null;
-  }) => void;
-}
-
-export const useOrgStore = create<OrgState>()(
-  persist(
-    (set) => ({
-      organizationId: null,
-      planTier: null,
-      setOrg: ({ organizationId, planTier }) =>
-        set({ organizationId, planTier: planTier ?? null }),
-    }),
-    { name: "elitecoach.orgstore" },
-  ),
-);
 
 export interface ChatMessage {
   id: string;

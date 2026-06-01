@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { requireOrgAdmin } from "@/lib/auth-guard";
-import { useOrgStore } from "@/lib/stores";
+
 import { useEffect, useState } from "react";
 import { TopNav } from "@/components/TopNav";
 import { OrgTabs } from "@/components/OrgTabs";
@@ -38,17 +38,15 @@ interface FilterState {
   end_date: string;
 }
 
-export const Route = createFileRoute("/org/$orgId/dashboard")({
-  beforeLoad: ({ params }) => {
+export const Route = createFileRoute("/enterprise/dashboard")({
+  beforeLoad: () => {
     requireOrgAdmin();
-    useOrgStore.getState().setOrg({ organizationId: params.orgId });
   },
   head: () => ({ meta: [{ title: "Org dashboard — EliteCoach" }] }),
   component: OrgDashboardPage,
 });
 
 function OrgDashboardPage() {
-  const { orgId } = Route.useParams();
   const [data, setData] = useState<OrgDashboard | null>(null);
   const [orgDetails, setOrgDetails] = useState<any | null>(null);
   const [budget, setBudget] = useState<any | null>(null);
@@ -67,19 +65,21 @@ function OrgDashboardPage() {
   const [savingBrand, setSavingBrand] = useState(false);
 
   useEffect(() => {
-    if (orgDetails) {
-      setBrandForm({
-        logo_url: orgDetails.logo_url || "",
-        primary_color: orgDetails.primary_color || "#004B9E",
-        org_name: orgDetails.name || orgDetails.org_name || ""
-      });
-    }
+    const storeName = "";
+    setBrandForm({
+      logo_url: orgDetails?.logo_url || "",
+      primary_color: orgDetails?.primary_color || "#004B9E",
+      org_name: orgDetails?.name || orgDetails?.org_name || storeName
+    });
   }, [orgDetails]);
 
   const handleSaveBranding = async () => {
     setSavingBrand(true);
     try {
-      await identityApi.patch('/api/v1/enterprise/branding', brandForm);
+      const res = await identityApi.patch('/api/v1/enterprise/branding', brandForm);
+      const updated = res.data?.data ?? res.data;
+      setOrgDetails(updated);
+
       toast.success("Branding settings saved successfully");
     } catch (e) {
       toast.error("Failed to save branding settings");
@@ -118,24 +118,26 @@ function OrgDashboardPage() {
     
     // Initial fetches that don't depend on filters
     Promise.all([
-      identityApi.get(`/api/v1/enterprise/organizations`).catch(() => ({ data: null })), // usually org details endpoint
+      identityApi.patch(`/api/v1/enterprise/branding`, {}).catch(() => ({ data: null })), // fetch current branding info
       identityApi.get("/api/v1/enterprise/teams").catch(() => ({ data: [] })),
       contentApi.get("/api/v1/courses/").catch(() => ({ data: [] })),
       identityApi.get("/api/v1/enterprise/budget").catch(() => ({ data: null })),
       identityApi.get("/api/v1/payments/invoices").catch(() => ({ data: [] }))
     ]).then(([orgRes, tRes, cRes, bRes, iRes]) => {
       // Mute errors since enterprise org detail endpoint might be different
-      setOrgDetails(orgRes.data?.data ?? orgRes.data);
+      const brandingData = orgRes.data?.data ?? orgRes.data;
+      setOrgDetails(brandingData);
+
       setTeams(tRes.data?.data ?? tRes.data ?? []);
       setCourses(cRes.data?.data ?? cRes.data ?? []);
       setBudget(bRes.data?.data ?? bRes.data);
       setInvoices(iRes.data?.data ?? iRes.data ?? []);
     });
-  }, [orgId]);
+  }, []);
 
   useEffect(() => {
     fetchDashboardData();
-  }, [orgId, filters.team_id, filters.course_id, filters.start_date, filters.end_date]);
+  }, [filters.team_id, filters.course_id, filters.start_date, filters.end_date]);
 
   const handleExport = async (format: "pdf" | "excel") => {
     if (format === "pdf") setExportingPdf(true);
@@ -223,12 +225,12 @@ function OrgDashboardPage() {
   return (
     <div className="min-h-screen flex flex-col bg-surface">
       <TopNav />
-      <OrgTabs orgId={orgId} />
+      <OrgTabs />
       <div className="container-1200 py-12 flex-1">
         <div className="mb-10 flex items-end justify-between flex-wrap gap-4">
           <div>
             <span className="label-caps text-coral mb-2 inline-block">
-              {orgDetails?.name ?? "Organisation"}
+              {orgDetails?.name || orgDetails?.org_name || "Organisation"}
             </span>
             <h1 className="text-4xl font-bold tracking-tight">Overview</h1>
           </div>

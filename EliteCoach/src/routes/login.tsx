@@ -4,11 +4,12 @@ import { useState, FormEvent } from "react";
 import { AuthLayout } from "@/components/AuthLayout";
 import {
   identityApi,
+  aiTutorApi,
   extractErrorMessage,
   findNestedObject,
   findNestedString,
 } from "@/lib/api-client";
-import { type AuthUser, useAuthStore, useOrgStore } from "@/lib/stores";
+import { type AuthUser, useAuthStore } from "@/lib/stores";
 import { toast } from "sonner";
 
 function pickString(...values: unknown[]): string | null {
@@ -38,7 +39,7 @@ export const Route = createFileRoute("/login")({
 function LoginPage() {
   const navigate = useNavigate();
   const setSession = useAuthStore((s) => s.setSession);
-  const setOrg = useOrgStore((s) => s.setOrg);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -125,8 +126,8 @@ function LoginPage() {
           findNestedString(rawUser, ["userId", "user_id"]) ??
           undefined,
         organizationId:
-          pickString(rawUser.organizationId, rawUser.orgId, data.organizationId, data.orgId) ??
-          findNestedString(payload, ["organizationId", "orgId"]) ??
+          pickString(rawUser.organizationId, rawUser.orgId, rawUser.org_id, data.organizationId, data.orgId, data.org_id) ??
+          findNestedString(payload, ["organizationId", "orgId", "org_id"]) ??
           undefined,
         roles: overrideRole ? overrideRole.split(',') : (
           Array.isArray(rawUser.roles) ? rawUser.roles :
@@ -136,9 +137,7 @@ function LoginPage() {
       };
       if (!accessToken) throw new Error("No access token returned");
       setSession({ user, accessToken, refreshToken });
-      if (user.organizationId) {
-        setOrg({ organizationId: user.organizationId });
-      }
+
       toast.success(
         `Welcome back${user.firstName ? ", " + user.firstName : ""}`,
       );
@@ -149,13 +148,17 @@ function LoginPage() {
         navigate({ to: "/tutor/inbox" });
       }
       else if (roles.includes("enterprise_admin")) {
-        if (user.organizationId) {
-          navigate({ to: "/org/$orgId/dashboard", params: { orgId: user.organizationId } });
-        } else {
-          navigate({ to: "/org-setup" });
+        navigate({ to: "/enterprise/dashboard" });
+      }
+      else {
+        try {
+          await aiTutorApi.get("/api/v1/onboarding/path");
+          navigate({ to: "/dashboard" });
+        } catch (e: any) {
+          if (e.response?.status === 404) navigate({ to: "/onboarding" });
+          else navigate({ to: "/dashboard" });
         }
       }
-      else navigate({ to: "/dashboard" });
     } catch (err) {
       console.error("[Login] Authentication failed:", err);
       const message = extractErrorMessage(err, "Login failed");

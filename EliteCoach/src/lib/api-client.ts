@@ -1025,9 +1025,16 @@ export async function getDiagnosticQuestions(payload: {
   try {
     const res = await aiTutorApi.post("/api/v1/onboarding/start", payload);
     const data = unwrapApiData<any>(res.data);
+    let questions = Array.isArray(data) ? data : (data?.questions ?? []);
+    
+    if (questions.length === 0) {
+      console.warn("[Mock Fallback] API returned empty questions array, using local mock data.");
+      questions = MOCK_QUESTIONS.technology;
+    }
+
     return {
-      profile_id: data?.profile_id,
-      questions: data?.questions ?? []
+      profile_id: data?.profile_id || "legacy",
+      questions
     };
   } catch (err) {
     console.warn("[Mock Fallback] /api/v1/onboarding/start failed, using local mock data.");
@@ -1041,7 +1048,6 @@ export async function submitOnboardingDiagnostic(
 ): Promise<any> {
   try {
     const res = await aiTutorApi.post("/api/v1/onboarding/submit", { 
-      profile_id: payload.profile_id,
       answers: payload.answers 
     });
     return unwrapApiData<any>(res.data);
@@ -1152,8 +1158,21 @@ export interface CreateOrgResponse {
 }
 
 export async function createOrganization(payload: CreateOrgRequest): Promise<CreateOrgResponse> {
-  const response = await identityApi.post("/api/v1/organizations", payload);
-  return unwrapApiData<CreateOrgResponse>(response.data);
+  const slug = payload.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "org";
+  const reqBody = {
+    name: payload.name,
+    slug: slug,
+    plan: payload.planTier || "enterprise_pro",
+    budget_ngn: null
+  };
+  const response = await identityApi.post("/api/v1/enterprise/organizations", reqBody);
+  const data = unwrapApiData<any>(response.data);
+  return {
+    organizationId: data.id || data.organizationId || "",
+    planTier: data.plan || data.planTier || "enterprise_pro",
+    maxLearners: data.maxLearners || 100,
+    createdAt: data.createdAt || new Date().toISOString()
+  };
 }
 
 // ==========================================

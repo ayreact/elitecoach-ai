@@ -1,11 +1,11 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 
-export function OrgTabs({ orgId }: { orgId: string }) {
+export function OrgTabs() {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const tabs = [
-    { to: `/org/${orgId}/dashboard`, label: "Overview" },
-    { to: `/org/${orgId}/learners`, label: "Learners" },
-    { to: `/org/${orgId}/reports`, label: "Reports" },
+    { to: `/enterprise/dashboard`, label: "Overview" },
+    { to: `/enterprise/learners`, label: "Learners" },
+    { to: `/enterprise/reports`, label: "Reports" },
   ];
   return (
     <div className="border-b border-border bg-surface-card">

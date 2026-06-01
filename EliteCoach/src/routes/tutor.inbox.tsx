@@ -18,7 +18,7 @@ import {
   type DirectConversation,
   type DirectMessage,
 } from "@/lib/api-client";
-import { VideoRecorder } from "@/components/VideoRecorder";
+
 import { toast } from "sonner";
 import {
   Inbox,
@@ -936,24 +936,16 @@ function TutorInboxPage() {
                           {/* TAB 2: Video Response */}
                           {actionTab === "video" && (
                             <div className="space-y-4">
-                              <VideoRecorder 
-                                onRecordComplete={(blob) => {
-                                  const url = URL.createObjectURL(blob);
-                                  setVideoUrl(url);
-                                  toast.success("Video response recorded and attached!");
-                                }} 
-                                onCancel={() => setVideoUrl("")}
-                              />
-                              {videoUrl && (
-                                <div className="bg-success/5 border border-success/20 rounded p-4 flex items-center justify-between text-xs animate-expand-down">
-                                  <span className="text-success font-semibold flex items-center gap-1.5">
-                                    <Check size={14} /> Ready to send recorded video response
-                                  </span>
-                                  <button onClick={() => setVideoUrl("")} className="text-destructive hover:underline">
-                                    Discard
-                                  </button>
-                                </div>
-                              )}
+                              <div>
+                                <label className="text-xs font-bold text-text-secondary mb-1 block">Video URL (YouTube, Loom, etc.)</label>
+                                <input
+                                  type="url"
+                                  value={videoUrl}
+                                  onChange={(e) => setVideoUrl(e.target.value)}
+                                  placeholder="https://youtu.be/..."
+                                  className="w-full text-sm p-3 border border-border bg-surface rounded focus:border-primary outline-none"
+                                />
+                              </div>
                             </div>
                           )}
 

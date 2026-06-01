@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { requireOrgAdmin } from "@/lib/auth-guard";
-import { useOrgStore } from "@/lib/stores";
+
 import { useState } from "react";
 import { TopNav } from "@/components/TopNav";
 import { OrgTabs } from "@/components/OrgTabs";
@@ -8,17 +8,15 @@ import { identityApi, extractErrorMessage } from "@/lib/api-client";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
 
-export const Route = createFileRoute("/org/$orgId/reports")({
-  beforeLoad: ({ params }) => {
+export const Route = createFileRoute("/enterprise/reports")({
+  beforeLoad: () => {
     requireOrgAdmin();
-    useOrgStore.getState().setOrg({ organizationId: params.orgId });
   },
   head: () => ({ meta: [{ title: "Org reports — EliteCoach" }] }),
   component: OrgReportsPage,
 });
 
 function OrgReportsPage() {
-  const { orgId } = Route.useParams();
   const [tab, setTab] = useState<"progress" | "compliance">("progress");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
@@ -74,7 +72,7 @@ function OrgReportsPage() {
   return (
     <div className="min-h-screen flex flex-col bg-surface">
       <TopNav />
-      <OrgTabs orgId={orgId} />
+      <OrgTabs />
       <div className="container-1200 py-12 flex-1">
         <div className="mb-10">
           <span className="label-caps text-coral mb-2 inline-block">

@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { requireLearner } from "@/lib/auth-guard";
 import { useEffect, useMemo, useState } from "react";
 import { TopNav } from "@/components/TopNav";
@@ -23,6 +23,7 @@ export const Route = createFileRoute("/dashboard")({
 });
 
 function DashboardPage() {
+    const navigate = useNavigate();
     const user = useAuthStore((s) => s.user);
     const [courses, setCourses] = useState<CourseCardData[]>([]);
     const [attempts, setAttempts] = useState<any[]>([]);
@@ -63,7 +64,12 @@ function DashboardPage() {
             user?.id || user?.userId
                 ? aiTutorApi
                       .get(`/api/v1/onboarding/path`)
-                      .catch(() => ({ data: null }))
+                      .catch((e) => {
+                          if (e.response?.status === 404) {
+                              navigate({ to: "/onboarding" });
+                          }
+                          return { data: null };
+                      })
                 : Promise.resolve({ data: null }),
         ]).then(([c, a, p]) => {
             if (!alive) return;

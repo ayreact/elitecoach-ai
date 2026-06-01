@@ -28,7 +28,7 @@ function RegisterPage() {
     email: "",
     password: "",
   });
-  const [role, setRole] = useState<"solo_learner" | "enterprise_admin" | "tutor_author" | "tutor_responder">("solo_learner");
+  const [role, setRole] = useState<"solo_learner" | "enterprise_admin" | "tutor_author">("solo_learner");
   const [loading, setLoading] = useState(false);
   const [agreeNdpr, setAgreeNdpr] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
@@ -76,8 +76,7 @@ function RegisterPage() {
           >
             <option value="solo_learner">Solo Learner</option>
             <option value="enterprise_admin">Enterprise Admin</option>
-            <option value="tutor_author">Tutor Author (CMS)</option>
-            <option value="tutor_responder">Tutor Responder (Inbox)</option>
+            <option value="tutor_author">Tutor</option>
           </select>
         </div>
 
