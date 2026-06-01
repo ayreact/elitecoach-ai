@@ -100,6 +100,8 @@ function TutorCoursesPage() {
   const [analyticsLessonId, setAnalyticsLessonId] = useState<string | null>(null);
   const [lessonAnalytics, setLessonAnalytics] = useState<any>(null);
   const [generatingDraft, setGeneratingDraft] = useState<string | null>(null);
+  const [ragModalOpen, setRagModalOpen] = useState<string | null>(null);
+  const [ragText, setRagText] = useState("");
 
   const handleGenerateDraft = async (idx: number, bIdx: number, promptContext: string) => {
     const key = `${idx}-${bIdx}`;
@@ -442,12 +444,24 @@ function TutorCoursesPage() {
 
   const handleRagUpload = async (lessonId: string, file: File) => {
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      await contentApi.post(`/api/v1/cms/lessons/${lessonId}/rag`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      const text = await file.text();
+      await contentApi.post(`/api/v1/cms/lessons/${lessonId}/rag`, { content: text });
       toast.success("RAG document queued for indexing");
+      setRagModalOpen(null);
     } catch (err) {
       toast.error(extractErrorMessage(err, "Could not upload RAG document"));
+    }
+  };
+
+  const handleRagSubmitText = async () => {
+    if (!ragModalOpen || !ragText.trim()) return;
+    try {
+      await contentApi.post(`/api/v1/cms/lessons/${ragModalOpen}/rag`, { content: ragText });
+      toast.success("RAG content queued for indexing");
+      setRagModalOpen(null);
+      setRagText("");
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Could not submit RAG content"));
     }
   };
 
@@ -717,13 +731,8 @@ function TutorCoursesPage() {
                                             {(chunk as any).id && (
                                               <div className="flex gap-2 items-center">
                                                 <button onClick={(e) => { e.stopPropagation(); setPreviewLessonId((chunk as any).id); }} className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded hover:bg-primary/20 flex items-center gap-1"><Eye size={10} /> Preview</button>
-                                                <button onClick={(e) => { e.stopPropagation(); fetchAnalytics((chunk as any).id); }} className="text-[10px] bg-secondary/10 text-secondary px-2 py-0.5 rounded hover:bg-secondary/20 border border-border flex items-center gap-1"><BarChart size={10} /> Analytics</button>
-                                                <button onClick={(e) => { e.stopPropagation(); document.getElementById(`rag-upload-${(chunk as any).id}`)?.click(); }} className="text-[10px] bg-success/10 text-success px-2 py-0.5 rounded hover:bg-success/20 flex items-center gap-1"><FileText size={10} /> RAG</button>
-                                                <input type="file" id={`rag-upload-${(chunk as any).id}`} className="hidden" accept=".pdf,.txt" onChange={(e) => {
-                                                  const file = e.target.files?.[0];
-                                                  if (file) handleRagUpload((chunk as any).id, file);
-                                                  e.target.value = '';
-                                                }} />
+                                                <button onClick={(e) => { e.stopPropagation(); fetchAnalytics((chunk as any).id); }} className="text-[10px] bg-secondary/10 text-grey px-2 py-0.5 rounded hover:bg-secondary/20 border border-border flex items-center gap-1"><BarChart size={10} /> Analytics</button>
+                                                <button onClick={(e) => { e.stopPropagation(); setRagModalOpen((chunk as any).id); setRagText(""); }} className="text-[10px] bg-success/10 text-success px-2 py-0.5 rounded hover:bg-success/20 flex items-center gap-1"><FileText size={10} /> RAG</button>
                                                 <button onClick={(e) => { e.stopPropagation(); editLesson(c.id, chunk); }} className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded hover:bg-primary/20 flex items-center gap-1"><Pencil size={10} /></button>
                                                 <button onClick={(e) => { e.stopPropagation(); deleteLesson(c.id, (chunk as any).id); }} className="text-[10px] bg-destructive/10 text-destructive px-2 py-0.5 rounded hover:bg-destructive/20 flex items-center gap-1"><Trash2 size={10} /></button>
                                               </div>
@@ -877,16 +886,8 @@ function TutorCoursesPage() {
                                   onChange={(e) => { const u=[...moduleForm.lessons]; u[idx].blocks[bIdx].content=e.target.value; setModuleForm({...moduleForm, lessons: u}); }}
                                   rows={4}
                                   placeholder="Write content (Markdown supported)"
-                                  className="w-full px-2 py-1.5 border border-border rounded bg-surface text-xs resize-none pb-8"
+                                  className="w-full px-2 py-1.5 border border-border rounded bg-surface text-xs resize-none pb-2"
                                 />
-                                <button 
-                                  type="button" 
-                                  disabled={generatingDraft === `${idx}-${bIdx}` || !lesson.title}
-                                  onClick={() => handleGenerateDraft(idx, bIdx, lesson.title)}
-                                  className="absolute bottom-2 right-2 text-[10px] bg-primary text-white px-2 py-1 rounded flex items-center gap-1 disabled:opacity-50 hover:bg-primary-hover shadow-sm"
-                                >
-                                  {generatingDraft === `${idx}-${bIdx}` ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />} AI Draft
-                                </button>
                               </div>
                             ) : (
                               <input
@@ -958,17 +959,71 @@ function TutorCoursesPage() {
               {!lessonAnalytics ? (
                 <div className="flex justify-center p-10"><Loader2 className="animate-spin text-primary" /></div>
               ) : (
-                <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div className="bg-surface p-4 rounded-lg border border-border text-center">
-                    <div className="text-xs text-text-secondary uppercase font-semibold tracking-wider">Escalation Rate</div>
-                    <div className="text-3xl font-bold text-primary mt-1">{lessonAnalytics.escalation_rate || "0%"}</div>
+                    <div className="text-xs text-text-secondary uppercase font-semibold tracking-wider">Completion Rate</div>
+                    <div className="text-3xl font-bold text-success mt-1">
+                      {lessonAnalytics.completion_rate !== undefined ? `${Math.round(lessonAnalytics.completion_rate * 100)}%` : "0%"}
+                    </div>
                   </div>
                   <div className="bg-surface p-4 rounded-lg border border-border text-center">
-                    <div className="text-xs text-text-secondary uppercase font-semibold tracking-wider">Failure Rate</div>
-                    <div className="text-3xl font-bold text-destructive mt-1">{lessonAnalytics.fail_rate || "0%"}</div>
+                    <div className="text-xs text-text-secondary uppercase font-semibold tracking-wider">Views</div>
+                    <div className="text-3xl font-bold text-primary mt-1">{lessonAnalytics.views || 0}</div>
+                  </div>
+                  <div className="bg-surface p-4 rounded-lg border border-border text-center col-span-2">
+                    <div className="text-xs text-text-secondary uppercase font-semibold tracking-wider">Avg Time Spent</div>
+                    <div className="text-2xl font-bold text-text-primary mt-1">{lessonAnalytics.avg_time_spent || "0m"}</div>
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RAG MODAL */}
+      {ragModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-navy/60 backdrop-blur-sm animate-overlay-in" onClick={() => setRagModalOpen(null)} />
+          <div className="relative bg-surface-card w-full max-w-lg rounded-xl shadow-2xl flex flex-col overflow-hidden animate-zoom-in">
+            <div className="px-5 py-4 border-b border-border flex justify-between items-center bg-surface">
+              <h3 className="font-bold flex items-center gap-2"><FileText size={16} /> Upload RAG Content</h3>
+              <button onClick={() => setRagModalOpen(null)} className="text-text-secondary hover:text-text-primary"><X size={18} /></button>
+            </div>
+            <div className="p-6 space-y-4 bg-surface-card">
+              <p className="text-sm text-text-secondary leading-relaxed">
+                Paste raw text directly from your document, or upload a supported text-based file.
+              </p>
+              <textarea
+                value={ragText}
+                onChange={(e) => setRagText(e.target.value)}
+                placeholder="Paste content here..."
+                className="w-full h-48 px-4 py-3 border border-border rounded-lg bg-surface text-sm resize-none focus:border-primary focus:ring-2 focus:ring-primary/10 outline-none transition-all"
+              />
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={handleRagSubmitText}
+                  disabled={!ragText.trim()}
+                  className="flex-1 bg-primary text-primary-foreground font-medium h-11 rounded-md hover:bg-primary-hover disabled:opacity-50 transition-colors shadow-sm"
+                >
+                  Submit Text
+                </button>
+                <div className="relative flex-1">
+                  <input 
+                    type="file" 
+                    accept=".txt,.md,.csv" 
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleRagUpload(ragModalOpen, file);
+                      e.target.value = '';
+                    }} 
+                  />
+                  <div className="w-full h-11 border border-border rounded-md flex items-center justify-center text-sm font-medium hover:bg-surface transition-colors cursor-pointer text-text-primary shadow-sm bg-surface-card">
+                    Or upload .txt / .md
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

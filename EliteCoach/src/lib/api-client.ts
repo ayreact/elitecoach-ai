@@ -1081,12 +1081,14 @@ export async function getLearningPath(userId: string): Promise<any> {
   return null;
 }
 
-export async function uploadLessonAsset(lessonId: string, file: File, assetType: "video" | "file" | "image"): Promise<{ id: string; url: string; asset_type: string; size_bytes: number } | null> {
+export async function uploadLessonAsset(lessonId: string, file: File, assetType: string): Promise<any> {
     try {
         const fd = new FormData();
         fd.append("file", file);
         fd.append("asset_type", assetType);
-        const res = await contentApi.post(`/api/v1/cms/lessons/${lessonId}/assets`, fd, {
+        
+        // The backend schema requires asset_type in the query string
+        const res = await contentApi.post(`/api/v1/cms/lessons/${lessonId}/assets?asset_type=${encodeURIComponent(assetType)}`, fd, {
             headers: { "Content-Type": "multipart/form-data" }
         });
         return unwrapApiData<any>(res.data);

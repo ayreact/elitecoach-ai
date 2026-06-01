@@ -238,9 +238,9 @@ function LoginPage() {
             className="w-full h-12 px-4 border border-border focus:border-primary outline-none transition-colors bg-surface-card cursor-pointer"
           >
             <option value="">Auto-detect from backend</option>
-            <option value="TUTOR">Force Tutor</option>
-            <option value="ORG_ADMIN">Force Org Admin</option>
-            <option value="LEARNER">Force Learner</option>
+            <option value="tutor_author,tutor_responder">Force Tutor</option>
+            <option value="enterprise_admin">Force Org Admin</option>
+            <option value="solo_learner">Force Learner</option>
           </select>
           <p className="text-[11px] text-text-secondary mt-1">
             Since the backend ignores roles on registration, use this to test different dashboards.
