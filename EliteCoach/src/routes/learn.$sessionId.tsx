@@ -9,6 +9,7 @@ import {
     notificationsApi,
     extractErrorMessage,
     unwrapApiData,
+    unwrapApiList,
     escalateSessionToTutor,
     fetchInlineKnowledgeChecks,
     getModuleAssessment,
@@ -191,28 +192,38 @@ function LearningRoomPage() {
 
     useEffect(() => {
         if (!courseId) return;
-        contentApi
-            .get(`/api/v1/learning/course/${courseId}`)
-            .then((res) => {
-                const payload = unwrapApiData<any>(res.data);
-                const rawMods = Array.isArray(payload)
-                    ? payload
-                    : ((payload as any)?.modules ?? []);
-                
-                const normalized = rawMods.map((m: any) => ({
+        Promise.all([
+            contentApi.get(`/api/v1/learning/course/${courseId}`).catch(() => ({ data: null })),
+            contentApi.get(`/api/v1/courses/${courseId}/lessons`).catch(() => ({ data: [] }))
+        ])
+        .then(([courseRes, lessonsRes]) => {
+            const payload = unwrapApiData<any>(courseRes.data);
+            const lessonsList = unwrapApiList<any>(lessonsRes.data);
+            
+            const rawMods = Array.isArray(payload)
+                ? payload
+                : ((payload as any)?.modules ?? []);
+            
+            const normalized = rawMods.map((m: any) => {
+                const moduleLessons = lessonsList.filter((l: any) => l.module_id === m.id);
+                const fallbackLessons = m.lessons ?? [];
+                const finalLessons = moduleLessons.length > 0 ? moduleLessons : fallbackLessons;
+
+                return {
                     id: m.id,
                     title: m.title,
                     order_index: m.position,
-                    content_chunks: (m.lessons ?? []).map((l: any) => ({
+                    content_chunks: finalLessons.map((l: any) => ({
                         id: l.id,
                         title: l.title,
                         duration_minutes: l.estimated_minutes,
                         status: l.status,
                     }))
-                }));
-                setModules(normalized);
-            })
-            .catch(() => {});
+                };
+            });
+            setModules(normalized);
+        })
+        .catch(() => {});
     }, [courseId]);
 
 

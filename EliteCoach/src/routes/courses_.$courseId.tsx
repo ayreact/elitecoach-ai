@@ -111,18 +111,26 @@ function CourseDetailPage() {
                     console.error("Failed to fetch curriculum:", err);
                     return { data: null };
                 }),
+            contentApi
+                .get(`/api/v1/courses/${courseId}/lessons`, { timeout: 10000 })
+                .catch((err) => {
+                    console.error("Failed to fetch lessons:", err);
+                    return { data: [] };
+                }),
         ])
-            .then(([listRes, cur]) => {
+            .then(([listRes, cur, lessonsRes]) => {
                 if (!alive) return;
 
                 const curriculum = unwrapApiData<unknown>(cur.data);
                 const courseList = unwrapApiList<unknown>(listRes.data);
+                const lessonsList = unwrapApiList<any>(lessonsRes.data);
                 const courses = normalizeCourses(courseList);
 
                 console.log("Course Detail Debug:", {
                     id: courseId,
                     listLength: courseList.length,
                     hasCurriculum: !!curriculum,
+                    lessonsLength: lessonsList.length,
                 });
 
                 // Search by both string and number to be safe
@@ -147,16 +155,23 @@ function CourseDetailPage() {
                 // Map learning/course format to internal Module interface
                 let mods: any[] = [];
                 if (curriculum && typeof curriculum === "object" && Array.isArray((curriculum as any).modules)) {
-                    mods = (curriculum as any).modules.map((m: any) => ({
-                        id: m.id,
-                        title: m.title,
-                        order_index: m.position,
-                        content_chunks: (m.lessons ?? []).map((l: any) => ({
-                            id: l.id,
-                            title: l.title,
-                            duration_minutes: l.estimated_minutes
-                        }))
-                    }));
+                    mods = (curriculum as any).modules.map((m: any) => {
+                        // Link standalone lessons to this module
+                        const moduleLessons = lessonsList.filter((l: any) => l.module_id === m.id);
+                        const fallbackLessons = m.lessons ?? [];
+                        const finalLessons = moduleLessons.length > 0 ? moduleLessons : fallbackLessons;
+                        
+                        return {
+                            id: m.id,
+                            title: m.title,
+                            order_index: m.position,
+                            content_chunks: finalLessons.map((l: any) => ({
+                                id: l.id,
+                                title: l.title,
+                                duration_minutes: l.estimated_minutes
+                            }))
+                        };
+                    });
                 } else if (Array.isArray(curriculum)) {
                     mods = curriculum;
                 }
@@ -208,21 +223,20 @@ function CourseDetailPage() {
     const startLearning = async () => {
         setStarting(true);
         try {
+            // Find the very first lesson ID in the curriculum to start with
+            const firstLessonId = modules[0]?.content_chunks?.[0]?.id;
+            
+            if (!firstLessonId) {
+                toast.error("This course has no lessons available to start.");
+                setStarting(false);
+                return;
+            }
 
-            const numericCourseId = coerceIntegerId(courseId) ?? Number(courseId);
-            const subjectId = numericCourseId;
-
-            const res = await aiTutorApi.post(
-                "/api/v1/ai/session/start",
-                {},
-                {
-                    params: {
-                        course_id: numericCourseId,
-                        subject_id: subjectId,
-                        topic: course?.title ?? "Course",
-                    },
-                }
-            );
+            // The backend strictly expects { lesson_id: string } in the body
+            const res = await aiTutorApi.post("/api/v1/ai/session/start", {
+                lesson_id: String(firstLessonId)
+            });
+            
             const payload = unwrapApiData<any>(res.data);
             const sessionId = payload?.session_id ?? payload?.id ?? payload;
 
@@ -231,7 +245,7 @@ function CourseDetailPage() {
             setSession({
                 sessionId: String(sessionId),
                 courseId: String(courseId),
-                subjectId: numericCourseId,
+                subjectId: Number(courseId) || 0, // Fallback for subject ID logic
             });
 
             navigate({

@@ -9,6 +9,7 @@ lerna-debug.log*
 prc.pdf
 openapi.json
 api_doc.md
+CHANGELOG.md
 .env
 .env.*
 !.env.example
