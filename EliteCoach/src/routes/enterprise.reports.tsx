@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { requireOrgAdmin } from "@/lib/auth-guard";
-import { useOrgStore } from "@/lib/stores";
+
 import { useState } from "react";
 import { TopNav } from "@/components/TopNav";
 import { OrgTabs } from "@/components/OrgTabs";
@@ -8,23 +8,21 @@ import { identityApi, extractErrorMessage } from "@/lib/api-client";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
 
-export const Route = createFileRoute("/org/$orgId/reports")({
-  beforeLoad: ({ params }) => {
+export const Route = createFileRoute("/enterprise/reports")({
+  beforeLoad: () => {
     requireOrgAdmin();
-    useOrgStore.getState().setOrg({ organizationId: params.orgId });
   },
   head: () => ({ meta: [{ title: "Org reports — EliteCoach" }] }),
   component: OrgReportsPage,
 });
 
 function OrgReportsPage() {
-  const { orgId } = Route.useParams();
   const [tab, setTab] = useState<"progress" | "compliance">("progress");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [data, setData] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
-  const [exportFormat, setExportFormat] = useState<"PDF" | "CSV">("PDF");
+  const [exportFormat, setExportFormat] = useState<"pdf" | "excel">("pdf");
 
   const fetchReport = async () => {
     setLoading(true);
@@ -32,15 +30,12 @@ function OrgReportsPage() {
       const params = new URLSearchParams();
       if (tab === "progress") {
         if (start)
-          params.set("startDate", new Date(`${start}T00:00:00`).toISOString());
+          params.set("from_date", new Date(`${start}T00:00:00`).toISOString());
         if (end)
-          params.set("endDate", new Date(`${end}T23:59:59`).toISOString());
-        params.set("format", "JSON");
+          params.set("to_date", new Date(`${end}T23:59:59`).toISOString());
+        params.set("format", "json");
       }
-      const url =
-        tab === "progress"
-          ? `/api/v1/organizations/${orgId}/reports/learner-progress?${params.toString()}`
-          : `/api/v1/organizations/${orgId}/reports/compliance`;
+      const url = `/api/v1/enterprise/reports/export?${params.toString()}`;
       const res = await identityApi.get(url);
       setData(res.data?.data ?? res.data);
     } catch (err) {
@@ -56,15 +51,12 @@ function OrgReportsPage() {
       const params = new URLSearchParams();
       if (tab === "progress") {
         if (start)
-          params.set("startDate", new Date(`${start}T00:00:00`).toISOString());
+          params.set("from_date", new Date(`${start}T00:00:00`).toISOString());
         if (end)
-          params.set("endDate", new Date(`${end}T23:59:59`).toISOString());
+          params.set("to_date", new Date(`${end}T23:59:59`).toISOString());
         params.set("format", exportFormat);
       }
-      const url =
-        tab === "progress"
-          ? `/api/v1/organizations/${orgId}/reports/learner-progress?${params.toString()}`
-          : `/api/v1/organizations/${orgId}/reports/compliance`;
+      const url = `/api/v1/enterprise/reports/export?${params.toString()}`;
       await identityApi.get(url);
       toast.success(`${exportFormat} report exported`);
     } catch (err) {
@@ -80,7 +72,7 @@ function OrgReportsPage() {
   return (
     <div className="min-h-screen flex flex-col bg-surface">
       <TopNav />
-      <OrgTabs orgId={orgId} />
+      <OrgTabs />
       <div className="container-1200 py-12 flex-1">
         <div className="mb-10">
           <span className="label-caps text-coral mb-2 inline-block">
@@ -144,12 +136,12 @@ function OrgReportsPage() {
               <select
                 value={exportFormat}
                 onChange={(e) =>
-                  setExportFormat(e.target.value as "PDF" | "CSV")
+                  setExportFormat(e.target.value as "pdf" | "excel")
                 }
                 className="h-12 px-3 border border-border bg-surface-card text-sm"
               >
-                <option>PDF</option>
-                <option>CSV</option>
+                <option value="pdf">PDF</option>
+                <option value="excel">Excel</option>
               </select>
               <button
                 onClick={exportReport}

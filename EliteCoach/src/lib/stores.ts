@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import { clearAuth, writeAuth } from "@/lib/api-client";
+import { clearAuth, writeAuth, registerAuthSetter } from "@/lib/api-client";
 
 export interface AuthUser {
   id?: string;
@@ -8,7 +8,7 @@ export interface AuthUser {
   email: string;
   firstName?: string;
   lastName?: string;
-  userType?: "LEARNER" | "TUTOR" | "ORG_ADMIN" | string;
+  roles?: string[];
   organizationId?: string;
 }
 
@@ -52,26 +52,11 @@ export const useAuthStore = create<AuthState>()(
   ),
 );
 
-interface OrgState {
-  organizationId: string | null;
-  planTier: string | null;
-  setOrg: (data: {
-    organizationId: string | null;
-    planTier?: string | null;
-  }) => void;
-}
+// Register the setter for the api-client to proactively refresh tokens without a circular dependency
+registerAuthSetter((accessToken, refreshToken) => {
+  useAuthStore.setState({ accessToken, refreshToken });
+});
 
-export const useOrgStore = create<OrgState>()(
-  persist(
-    (set) => ({
-      organizationId: null,
-      planTier: null,
-      setOrg: ({ organizationId, planTier }) =>
-        set({ organizationId, planTier: planTier ?? null }),
-    }),
-    { name: "elitecoach.orgstore" },
-  ),
-);
 
 export interface ChatMessage {
   id: string;

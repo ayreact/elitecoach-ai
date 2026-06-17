@@ -140,7 +140,7 @@ function LandingPage() {
     let alive = true;
     setLoading(true);
     contentApi
-      .get("/courses/")
+      .get("/api/v1/courses/")
       .then((res) => {
         if (!alive) return;
         setCourses(

@@ -63,10 +63,11 @@ function VerifyOtpPage() {
       return toast.error(`Enter all ${digits.length} digits`);
     setLoading(true);
     try {
-      await identityApi.post("/api/v1/auth/verify/otp-email", { email, otp });
+      await identityApi.get(`/api/v1/auth/verify-email/${otp}`);
       toast.success("Email verified — please log in");
       navigate({ to: "/login" });
     } catch (err) {
+      console.error("[VerifyOTP] Verification failed:", err);
       toast.error(extractErrorMessage(err, "Invalid or expired code"));
     } finally {
       setLoading(false);

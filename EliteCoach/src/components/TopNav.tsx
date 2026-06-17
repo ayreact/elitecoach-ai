@@ -3,6 +3,7 @@ import { useAuthStore } from "@/lib/stores";
 import { useState } from "react";
 import { Menu, X } from "lucide-react";
 import { Logo } from "@/components/Logo";
+import { NotificationsMenu } from "@/components/NotificationsMenu";
 
 export function TopNav() {
   const { isLoggedIn, user, logout } = useAuthStore();
@@ -14,8 +15,9 @@ export function TopNav() {
     navigate({ to: "/" });
   }; 
 
-  const isTutor = user?.userType === "TUTOR";
-  const isLearner = user?.userType === "LEARNER" || !user?.userType;
+  const roles = user?.roles ?? [];
+  const isTutor = roles.includes("tutor_author") || roles.includes("tutor_responder");
+  const isLearner = roles.includes("solo_learner") || roles.includes("org_learner") || roles.length === 0;
 
   return (
     <header className="sticky top-0 z-40 h-16 bg-surface-card border-b border-border">
@@ -62,13 +64,22 @@ export function TopNav() {
             </Link>
           )}
           {isTutor && (
-            <Link
-              to="/tutor/courses"
-              className="text-sm font-medium text-text-primary hover:text-primary transition-colors"
-              activeProps={{ className: "text-primary" }}
-            >
-              Tutor CMS
-            </Link>
+            <>
+              <Link
+                to="/tutor/courses"
+                className="text-sm font-medium text-text-primary hover:text-primary transition-colors"
+                activeProps={{ className: "text-primary" }}
+              >
+                Tutor CMS
+              </Link>
+              <Link
+                to="/tutor/inbox"
+                className="text-sm font-medium text-text-primary hover:text-primary transition-colors"
+                activeProps={{ className: "text-primary" }}
+              >
+                Tutor Inbox
+              </Link>
+            </>
           )}
         </nav>
 
@@ -81,6 +92,7 @@ export function TopNav() {
               >
                 {user?.firstName ?? "Profile"}
               </Link>
+              <NotificationsMenu />
               <button
                 onClick={handleLogout}
                 className="h-11 px-4 border border-border text-sm font-medium hover:bg-surface transition-colors"
@@ -155,13 +167,22 @@ export function TopNav() {
               </Link>
             )}
             {isTutor && (
-              <Link
-                to="/tutor/courses"
-                onClick={() => setOpen(false)}
-                className="py-2 text-sm font-medium"
-              >
-                Tutor CMS
-              </Link>
+              <>
+                <Link
+                  to="/tutor/courses"
+                  onClick={() => setOpen(false)}
+                  className="py-2 text-sm font-medium"
+                >
+                  Tutor CMS
+                </Link>
+                <Link
+                  to="/tutor/inbox"
+                  onClick={() => setOpen(false)}
+                  className="py-2 text-sm font-medium"
+                >
+                  Tutor Inbox
+                </Link>
+              </>
             )}
             {isLoggedIn ? (
               <>

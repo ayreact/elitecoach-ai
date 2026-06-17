@@ -8,6 +8,8 @@ import {
   findNestedObject,
   findNestedString,
   unwrapApiData,
+  downloadCertificate,
+  getLinkedInShareUrl,
 } from "@/lib/api-client";
 
 export const Route = createFileRoute("/verify-certificate/$code")({
@@ -48,12 +50,7 @@ function VerifyCertificatePage() {
 
       try {
         const directRes = await acsApi
-          .get(`/v1/assessment/certificates/verify/${safeCode}`)
-          .catch(async () =>
-            acsApi.get("/v1/assessment/certificates/verify", {
-              params: { code: safeCode },
-            }),
-          );
+          .get(`/api/v1/certificates/${safeCode}`);
         const payload = unwrapApiData<unknown>(directRes.data);
         const dataObj =
           findNestedObject(payload, ["certificate", "data", "result"]) ??
@@ -143,6 +140,55 @@ function VerifyCertificatePage() {
     };
   }, [safeCode]);
 
+  const handleDownloadCert = async () => {
+    if (!certificate) return;
+    try {
+      if (certificate.id) {
+        const url = await downloadCertificate(certificate.id);
+        if (url) {
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `Certificate_${certificate.verification_code || "EC"}.pdf`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          return;
+        }
+      }
+      
+      if (!certificate.pdf_url) return;
+      const downloadUrl = certificate.pdf_url.includes("res.cloudinary.com")
+        ? certificate.pdf_url.replace("/upload/", "/upload/fl_attachment/")
+        : certificate.pdf_url;
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.setAttribute("download", `Certificate-${certificate.verification_code || "EC"}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (e) {
+      if (certificate.pdf_url) window.open(certificate.pdf_url, "_blank");
+    }
+  };
+
+  const handleShareCert = async () => {
+    if (!certificate) return;
+    try {
+      if (certificate.id) {
+        const url = await getLinkedInShareUrl(certificate.id);
+        if (url) {
+          window.open(url, "_blank", "noopener,noreferrer");
+          return;
+        }
+      }
+      if (certificate.linkedin_share_url) {
+        window.open(certificate.linkedin_share_url, "_blank", "noopener,noreferrer");
+      }
+    } catch (e) {
+      if (certificate.linkedin_share_url) window.open(certificate.linkedin_share_url, "_blank", "noopener,noreferrer");
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-surface">
       <TopNav />
@@ -228,27 +274,7 @@ function VerifyCertificatePage() {
               <div className="flex flex-wrap gap-3">
                 {certificate.pdf_url && (
                   <button
-                    onClick={() => {
-                      if (!certificate.pdf_url) return;
-                      const downloadUrl = certificate.pdf_url.includes(
-                        "res.cloudinary.com",
-                      )
-                        ? certificate.pdf_url.replace(
-                            "/upload/",
-                            "/upload/fl_attachment/",
-                          )
-                        : certificate.pdf_url;
-
-                      const link = document.createElement("a");
-                      link.href = downloadUrl;
-                      link.setAttribute(
-                        "download",
-                        `Certificate-${certificate.verification_code || "EC"}.pdf`,
-                      );
-                      document.body.appendChild(link);
-                      link.click();
-                      document.body.removeChild(link);
-                    }}
+                    onClick={handleDownloadCert}
                     className="h-10 px-4 inline-flex items-center bg-primary text-primary-foreground font-medium hover:bg-primary-hover transition-colors cursor-pointer"
                   >
                     Download PDF
@@ -265,14 +291,12 @@ function VerifyCertificatePage() {
                   </a>
                 )}
                 {certificate.linkedin_share_url && (
-                  <a
-                    href={certificate.linkedin_share_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="h-10 px-4 inline-flex items-center border border-[#0077b5] text-[#0077b5] font-medium hover:bg-[#0077b5]/10 transition-colors"
+                  <button
+                    onClick={handleShareCert}
+                    className="h-10 px-4 inline-flex items-center border border-[#0077b5] text-[#0077b5] font-medium hover:bg-[#0077b5]/10 transition-colors cursor-pointer"
                   >
                     Share on LinkedIn
-                  </a>
+                  </button>
                 )}
               </div>
             </div>

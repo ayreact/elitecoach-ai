@@ -9,6 +9,10 @@ import {
   normalizeCourses,
   extractErrorMessage,
   unwrapApiData,
+  uploadLessonAsset,
+  addLessonTags,
+  getLessonAnalytics,
+  generateLessonDraft
 } from "@/lib/api-client";
 import { toast } from "sonner";
 import {
@@ -23,6 +27,12 @@ import {
   Clock,
   LayoutGrid,
   Trash2,
+  Video,
+  File,
+  BarChart,
+  Eye,
+  Tag,
+  Pencil
 } from "lucide-react";
 
 
@@ -75,12 +85,45 @@ function TutorCoursesPage() {
   const [moduleForm, setModuleForm] = useState({
     title: "",
     order_index: 1,
-    lessons: [{ title: "", content: "" }] as { title: string; content: string }[],
+    lessons: [{
+      title: "",
+      blocks: [{ type: "text" as "text" | "video" | "file", content: "", file: null as File | null }],
+      tags: { skill: "", industry: "", difficulty: "", objective: "" }
+    }],
     assessment_id: "",
     is_human_required: false,
   });
   const [creating, setCreating] = useState(false);
   const [savingModule, setSavingModule] = useState(false);
+  
+  const [previewLessonId, setPreviewLessonId] = useState<string | null>(null);
+  const [analyticsLessonId, setAnalyticsLessonId] = useState<string | null>(null);
+  const [lessonAnalytics, setLessonAnalytics] = useState<any>(null);
+  const [generatingDraft, setGeneratingDraft] = useState<string | null>(null);
+  const [ragModalOpen, setRagModalOpen] = useState<string | null>(null);
+  const [ragText, setRagText] = useState("");
+
+  const handleGenerateDraft = async (idx: number, bIdx: number, promptContext: string) => {
+    const key = `${idx}-${bIdx}`;
+    setGeneratingDraft(key);
+    try {
+      const draft = await generateLessonDraft(`Generate detailed educational content for a lesson titled: ${promptContext || "New Lesson"}`);
+      const updated = [...moduleForm.lessons];
+      updated[idx].blocks[bIdx].content = draft;
+      setModuleForm({ ...moduleForm, lessons: updated });
+      toast.success("AI draft generated");
+    } catch (err) {
+      toast.error("Failed to generate draft");
+    } finally {
+      setGeneratingDraft(null);
+    }
+  };
+
+  const fetchAnalytics = async (id: string) => {
+    setAnalyticsLessonId(id);
+    const data = await getLessonAnalytics(id);
+    setLessonAnalytics(data || { escalation_rate: "N/A", fail_rate: "N/A" });
+  };
   
   const [expandedCourse, setExpandedCourse] = useState<string | null>(null);
   const [curriculums, setCurriculums] = useState<Record<string, CourseCurriculum>>({});
@@ -102,7 +145,7 @@ function TutorCoursesPage() {
   const reload = async () => {
     setLoading(true);
     try {
-      const res = await contentApi.get("/courses/");
+      const res = await contentApi.get("/api/v1/cms/courses");
       const courseList = normalizeCourses(res.data) as Course[];
       courseList.reverse();  // Show newest items first
       setUnsortedCourses(courseList);
@@ -110,8 +153,20 @@ function TutorCoursesPage() {
       // Load curriculums for all courses to get accurate module counts
       const curriculumPromises = courseList.map(async (course) => {
         try {
-          const currRes = await contentApi.get(`/courses/${course.id}/curriculum`);
-          const curriculum = unwrapApiData(currRes.data) as CourseCurriculum;
+          const currRes = await contentApi.get(`/api/v1/cms/courses/${course.id}/modules`);
+          const modulesList = unwrapApiData(currRes.data) as any[];
+          
+          const modulesWithLessons = await Promise.all(modulesList.map(async (mod) => {
+            try {
+               const lessonRes = await contentApi.get(`/api/v1/cms/modules/${mod.id}/lessons`);
+               const lessons = unwrapApiData(lessonRes.data) as any[];
+               return { ...mod, content_chunks: lessons };
+            } catch (e) {
+               return { ...mod, content_chunks: [] };
+            }
+          }));
+
+          const curriculum = { ...course, modules: modulesWithLessons } as CourseCurriculum;
           return { courseId: course.id, curriculum };
         } catch (err) {
           console.warn(`Failed to load curriculum for course ${course.id}:`, err);
@@ -146,10 +201,20 @@ function TutorCoursesPage() {
   const submitCreate = async () => {
     setCreating(true);
     try {
-      await contentApi.post("/courses/", {
-        ...createForm,
-        skill_tags: [],
-        tutor_id: user?.id ?? user?.userId ?? user?.email ?? "tutor",
+      const slug = createForm.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const difficultyMap: Record<string, number> = {
+        "BEGINNER": 1,
+        "INTERMEDIATE": 2,
+        "ADVANCED": 3
+      };
+      const difficulty = difficultyMap[createForm.difficulty_level] || 1;
+
+      await contentApi.post("/api/v1/cms/courses", {
+        title: createForm.title,
+        slug,
+        description: createForm.description || null,
+        domain: createForm.domain,
+        difficulty,
       });
       toast.success("Course created");
       setCreateOpen(false);
@@ -172,38 +237,95 @@ function TutorCoursesPage() {
     const targetCourseId = moduleOpen; // capture before clearing
     setSavingModule(true);
     try {
-      const chunks = moduleForm.lessons
-        .filter((l) => l.title.trim())
-        .map((l) => ({ title: l.title.trim(), content: l.content.trim() || undefined }));
+      const validLessons = moduleForm.lessons.filter((l) => l.title.trim());
 
-      if (chunks.length === 0) {
+      if (validLessons.length === 0) {
         toast.error("Add at least one lesson with a title");
         setSavingModule(false);
         return;
       }
 
-      await contentApi.post(`/courses/${targetCourseId}/modules`, {
+      const moduleRes = await contentApi.post(`/api/v1/cms/modules`, {
+        course_id: targetCourseId,
         title: moduleForm.title,
-        order_index: moduleForm.order_index,
-        content_chunks: chunks,
-        assessment_id: moduleForm.assessment_id || undefined,
-        is_human_required: moduleForm.is_human_required,
+        position: moduleForm.order_index,
       });
+
+      const moduleId = moduleRes.data.id || moduleRes.data.data?.id;
+
+      if (moduleId) {
+        for (let i = 0; i < validLessons.length; i++) {
+          const lessonData = validLessons[i];
+          const lessonRes = await contentApi.post(`/api/v1/cms/lessons`, {
+            title: lessonData.title.trim(),
+            position: i + 1,
+            estimated_minutes: 10,
+            module_id: moduleId
+          });
+          const lessonId = lessonRes.data.id || lessonRes.data.data?.id;
+
+          if (lessonId) {
+            const tagArray = [];
+            if (lessonData.tags.skill) tagArray.push({ tag_type: "skill", tag_value: lessonData.tags.skill });
+            if (lessonData.tags.industry) tagArray.push({ tag_type: "industry", tag_value: lessonData.tags.industry });
+            if (lessonData.tags.difficulty) tagArray.push({ tag_type: "difficulty", tag_value: lessonData.tags.difficulty });
+            if (lessonData.tags.objective) tagArray.push({ tag_type: "objective", tag_value: lessonData.tags.objective });
+            if (tagArray.length > 0) {
+              await addLessonTags(lessonId, tagArray);
+            }
+
+            for (let j = 0; j < lessonData.blocks.length; j++) {
+              const b = lessonData.blocks[j];
+              if (b.type === "text" && b.content.trim()) {
+                await contentApi.post(`/api/v1/cms/lessons/${lessonId}/blocks`, {
+                  block_type: "text",
+                  position: j + 1,
+                  content: { html: b.content }
+                });
+              } else if ((b.type === "video" || b.type === "file") && b.file) {
+                const asset = await uploadLessonAsset(lessonId, b.file, b.type);
+                if (asset && asset.url) {
+                  await contentApi.post(`/api/v1/cms/lessons/${lessonId}/blocks`, {
+                    block_type: b.type,
+                    position: j + 1,
+                    content: { url: asset.url, name: b.file.name }
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
       toast.success("Module added");
       setModuleOpen(null);
       setModuleForm({
         title: "",
         order_index: 1,
-        lessons: [{ title: "", content: "" }],
+        lessons: [{
+          title: "",
+          blocks: [{ type: "text", content: "", file: null }],
+          tags: { skill: "", industry: "", difficulty: "", objective: "" }
+        }],
         assessment_id: "",
         is_human_required: false,
       });
       
       // Re-fetch curriculum for this course after adding module
       try {
-        const currRes = await contentApi.get(`/courses/${targetCourseId}/curriculum`);
-        const curriculum = unwrapApiData(currRes.data) as CourseCurriculum;
-        setCurriculums((prev) => ({ ...prev, [targetCourseId]: curriculum }));
+        const currRes = await contentApi.get(`/api/v1/cms/courses/${targetCourseId}/modules`);
+        const modulesList = unwrapApiData(currRes.data) as any[];
+        
+        const modulesWithLessons = await Promise.all(modulesList.map(async (mod) => {
+            try {
+               const lessonRes = await contentApi.get(`/api/v1/cms/modules/${mod.id}/lessons`);
+               const lessons = unwrapApiData(lessonRes.data) as any[];
+               return { ...mod, content_chunks: lessons };
+            } catch (e) {
+               return { ...mod, content_chunks: [] };
+            }
+        }));
+
+        setCurriculums((prev) => ({ ...prev, [targetCourseId]: { ...prev[targetCourseId], modules: modulesWithLessons } }));
       } catch (err) {
         console.warn(`Failed to reload curriculum for course ${targetCourseId}:`, err);
       }
@@ -217,12 +339,129 @@ function TutorCoursesPage() {
   const ingest = async (courseId: string) => {
     setIngesting(courseId);
     try {
-      await contentApi.post(`/courses/internal/ingest?course_id=${courseId}`);
-      toast.success("Course ingested");
+      await contentApi.patch(`/api/v1/cms/courses/${courseId}/status`, { status: "in_review" });
+      toast.success("Course submitted for review");
     } catch (err) {
-      toast.error(extractErrorMessage(err, "Ingest failed"));
+      toast.error(extractErrorMessage(err, "Submission failed"));
     } finally {
       setIngesting(null);
+    }
+  };
+
+  const reloadCourseCurriculum = async (courseId: string) => {
+    try {
+      const currRes = await contentApi.get(`/api/v1/cms/courses/${courseId}/modules`);
+      const payload = unwrapApiData<any>(currRes.data);
+      let loadedModules: Module[] = [];
+      if (Array.isArray(payload)) {
+         loadedModules = payload as Module[];
+      } else if (payload?.modules) {
+         loadedModules = payload.modules;
+      }
+      const modulesWithLessons = await Promise.all(loadedModules.map(async (mod) => {
+        try {
+           const lessonRes = await contentApi.get(`/api/v1/cms/modules/${mod.id}/lessons`);
+           const lessons = unwrapApiData(lessonRes.data) as any[];
+           return { ...mod, content_chunks: lessons };
+        } catch (e) {
+           return { ...mod, content_chunks: [] };
+        }
+      }));
+      setCurriculums((prev) => ({ ...prev, [courseId]: { ...payload, modules: modulesWithLessons } }));
+    } catch (err) {
+      console.warn("Could not reload curriculum", err);
+    }
+  };
+
+  const deleteCourse = async (courseId: string) => {
+    if (!confirm("Are you sure you want to delete this course?")) return;
+    try {
+      await contentApi.delete(`/api/v1/cms/courses/${courseId}`);
+      toast.success("Course deleted");
+      reload();
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Could not delete course"));
+    }
+  };
+
+  const deleteModule = async (courseId: string, moduleId: string) => {
+    if (!confirm("Are you sure you want to delete this module?")) return;
+    try {
+      await contentApi.delete(`/api/v1/cms/modules/${moduleId}`);
+      toast.success("Module deleted");
+      await reloadCourseCurriculum(courseId);
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Could not delete module"));
+    }
+  };
+
+  const deleteLesson = async (courseId: string, lessonId: string) => {
+    if (!confirm("Are you sure you want to delete this lesson?")) return;
+    try {
+      await contentApi.delete(`/api/v1/cms/lessons/${lessonId}`);
+      toast.success("Lesson deleted");
+      await reloadCourseCurriculum(courseId);
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Could not delete lesson"));
+    }
+  };
+
+  const editCourse = async (course: Course) => {
+    const newTitle = prompt("Enter new title for the course:", course.title);
+    if (!newTitle || newTitle === course.title) return;
+    try {
+      await contentApi.patch(`/api/v1/cms/courses/${course.id}`, { title: newTitle });
+      toast.success("Course updated");
+      reload();
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Could not update course"));
+    }
+  };
+
+  const editModule = async (courseId: string, mod: Module) => {
+    const newTitle = prompt("Enter new title for the module:", mod.title);
+    if (!newTitle || newTitle === mod.title) return;
+    try {
+      await contentApi.put(`/api/v1/cms/modules/${mod.id}`, { title: newTitle, position: mod.order_index });
+      toast.success("Module updated");
+      await reloadCourseCurriculum(courseId);
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Could not update module"));
+    }
+  };
+
+  const editLesson = async (courseId: string, lesson: any) => {
+    const newTitle = prompt("Enter new title for the lesson:", lesson.title || lesson);
+    if (!newTitle || newTitle === lesson.title || newTitle === lesson) return;
+    try {
+      await contentApi.put(`/api/v1/cms/lessons/${lesson.id}`, { title: newTitle });
+      toast.success("Lesson updated");
+      await reloadCourseCurriculum(courseId);
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Could not update lesson"));
+    }
+  };
+
+  const handleRagUpload = async (lessonId: string, file: File) => {
+    try {
+      const text = await file.text();
+      await contentApi.post(`/api/v1/cms/lessons/${lessonId}/rag`, { content: text });
+      toast.success("RAG document queued for indexing");
+      setRagModalOpen(null);
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Could not upload RAG document"));
+    }
+  };
+
+  const handleRagSubmitText = async () => {
+    if (!ragModalOpen || !ragText.trim()) return;
+    try {
+      await contentApi.post(`/api/v1/cms/lessons/${ragModalOpen}/rag`, { content: ragText });
+      toast.success("RAG content queued for indexing");
+      setRagModalOpen(null);
+      setRagText("");
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Could not submit RAG content"));
     }
   };
 
@@ -235,7 +474,7 @@ function TutorCoursesPage() {
     if (!curriculums[courseId]) {
       setLoadingCurriculums((prev) => ({ ...prev, [courseId]: true }));
       try {
-        const res = await contentApi.get(`/courses/${courseId}/curriculum`);
+        const res = await contentApi.get(`/api/v1/cms/courses/${courseId}/modules`);
         const payload = unwrapApiData<any>(res.data);
         
         let loadedModules: Module[] = [];
@@ -416,7 +655,13 @@ function TutorCoursesPage() {
                           </button>
                           <button onClick={() => ingest(c.id)} disabled={ingesting === c.id} className="h-8 px-3 bg-navy text-white text-xs font-medium rounded-md hover:bg-navy/85 transition-all duration-200 inline-flex items-center gap-1.5 disabled:opacity-50 active:scale-95 shadow-sm">
                             {ingesting === c.id ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                            Ingest
+                            Submit for Review
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); editCourse(c); }} className="h-8 w-8 bg-surface-card border border-border text-xs font-medium rounded-md hover:border-primary hover:text-primary transition-all duration-200 inline-flex items-center justify-center active:scale-95">
+                            <Pencil size={13} />
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); deleteCourse(c.id); }} className="h-8 w-8 bg-surface-card border border-border text-xs font-medium rounded-md hover:border-destructive hover:text-destructive transition-all duration-200 inline-flex items-center justify-center active:scale-95">
+                            <Trash2 size={13} />
                           </button>
                         </div>
                       </div>
@@ -465,7 +710,11 @@ function TutorCoursesPage() {
                                       <span className="w-6 h-6 rounded-md bg-primary/10 text-primary text-xs font-bold flex items-center justify-center">{mod.order_index ?? i + 1}</span>
                                       {mod.title}
                                     </div>
-                                    {mod.content_chunks && <span className="text-xs text-text-secondary">{mod.content_chunks.length} lesson{mod.content_chunks.length !== 1 ? "s" : ""}</span>}
+                                    <div className="flex items-center gap-3">
+                                      {mod.content_chunks && <span className="text-xs text-text-secondary">{mod.content_chunks.length} lesson{mod.content_chunks.length !== 1 ? "s" : ""}</span>}
+                                      <button onClick={(e) => { e.stopPropagation(); editModule(c.id, mod); }} className="text-text-secondary hover:text-primary transition-colors"><Pencil size={12} /></button>
+                                      <button onClick={(e) => { e.stopPropagation(); deleteModule(c.id, mod.id); }} className="text-text-secondary hover:text-destructive transition-colors"><Trash2 size={12} /></button>
+                                    </div>
                                   </div>
                                   <div className="p-4">
                                     {mod.content_chunks && mod.content_chunks.length > 0 ? (
@@ -478,6 +727,15 @@ function TutorCoursesPage() {
                                             <span className="flex-1">{typeof chunk === "string" ? chunk : chunk.title}</span>
                                             {(chunk as ContentChunk).duration_minutes && (
                                               <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-surface rounded-md border border-border shrink-0"><Clock size={10} /> {(chunk as ContentChunk).duration_minutes}m</span>
+                                            )}
+                                            {(chunk as any).id && (
+                                              <div className="flex gap-2 items-center">
+                                                <button onClick={(e) => { e.stopPropagation(); setPreviewLessonId((chunk as any).id); }} className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded hover:bg-primary/20 flex items-center gap-1"><Eye size={10} /> Preview</button>
+                                                <button onClick={(e) => { e.stopPropagation(); fetchAnalytics((chunk as any).id); }} className="text-[10px] bg-secondary/10 text-grey px-2 py-0.5 rounded hover:bg-secondary/20 border border-border flex items-center gap-1"><BarChart size={10} /> Analytics</button>
+                                                <button onClick={(e) => { e.stopPropagation(); setRagModalOpen((chunk as any).id); setRagText(""); }} className="text-[10px] bg-success/10 text-success px-2 py-0.5 rounded hover:bg-success/20 flex items-center gap-1"><FileText size={10} /> RAG</button>
+                                                <button onClick={(e) => { e.stopPropagation(); editLesson(c.id, chunk); }} className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded hover:bg-primary/20 flex items-center gap-1"><Pencil size={10} /></button>
+                                                <button onClick={(e) => { e.stopPropagation(); deleteLesson(c.id, (chunk as any).id); }} className="text-[10px] bg-destructive/10 text-destructive px-2 py-0.5 rounded hover:bg-destructive/20 flex items-center gap-1"><Trash2 size={10} /></button>
+                                              </div>
                                             )}
                                           </li>
                                         ))}
@@ -570,7 +828,7 @@ function TutorCoursesPage() {
                   <label className="label-caps text-text-secondary">Lessons</label>
                   <button
                     type="button"
-                    onClick={() => setModuleForm({ ...moduleForm, lessons: [...moduleForm.lessons, { title: "", content: "" }] })}
+                    onClick={() => setModuleForm({ ...moduleForm, lessons: [...moduleForm.lessons, { title: "", blocks: [{ type: "text", content: "", file: null }], tags: { skill: "", industry: "", difficulty: "", objective: "" } }] })}
                     className="text-xs text-primary font-medium hover:underline inline-flex items-center gap-1"
                   >
                     <Plus size={12} /> Add lesson
@@ -601,17 +859,52 @@ function TutorCoursesPage() {
                         placeholder="Lesson title"
                         className="w-full h-10 px-3 mb-2 border border-border rounded-md bg-surface-card focus:border-primary focus:ring-2 focus:ring-primary/10 outline-none transition-all duration-200 text-sm"
                       />
-                      <textarea
-                        value={lesson.content}
-                        onChange={(e) => {
-                          const updated = [...moduleForm.lessons];
-                          updated[idx] = { ...updated[idx], content: e.target.value };
-                          setModuleForm({ ...moduleForm, lessons: updated });
-                        }}
-                        rows={4}
-                        placeholder="Write the lesson content here... (supports Markdown)"
-                        className="w-full px-3 py-2 border border-border rounded-md bg-surface-card focus:border-primary focus:ring-2 focus:ring-primary/10 outline-none transition-all duration-200 text-sm resize-none"
-                      />
+                      
+                      <div className="mb-4 space-y-2 border-l-2 border-border pl-3">
+                        <div className="text-[10px] uppercase text-text-secondary font-semibold flex items-center gap-1"><Tag size={10} /> Tags</div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          <input placeholder="Skill" value={lesson.tags.skill} onChange={(e) => { const u=[...moduleForm.lessons]; u[idx].tags.skill=e.target.value; setModuleForm({...moduleForm, lessons: u}); }} className="h-8 px-2 border border-border rounded text-xs bg-surface" />
+                          <input placeholder="Industry" value={lesson.tags.industry} onChange={(e) => { const u=[...moduleForm.lessons]; u[idx].tags.industry=e.target.value; setModuleForm({...moduleForm, lessons: u}); }} className="h-8 px-2 border border-border rounded text-xs bg-surface" />
+                          <input placeholder="Difficulty" value={lesson.tags.difficulty} onChange={(e) => { const u=[...moduleForm.lessons]; u[idx].tags.difficulty=e.target.value; setModuleForm({...moduleForm, lessons: u}); }} className="h-8 px-2 border border-border rounded text-xs bg-surface" />
+                          <input placeholder="Learning Objective" value={lesson.tags.objective} onChange={(e) => { const u=[...moduleForm.lessons]; u[idx].tags.objective=e.target.value; setModuleForm({...moduleForm, lessons: u}); }} className="h-8 px-2 border border-border rounded text-xs bg-surface" />
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        {lesson.blocks.map((block, bIdx) => (
+                          <div key={bIdx} className="bg-surface-card p-3 rounded border border-border">
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="text-[10px] uppercase font-semibold text-text-secondary">Block {bIdx + 1} ({block.type})</span>
+                              {lesson.blocks.length > 1 && (
+                                <button type="button" onClick={() => { const u=[...moduleForm.lessons]; u[idx].blocks=u[idx].blocks.filter((_,i)=>i!==bIdx); setModuleForm({...moduleForm, lessons: u}); }} className="text-destructive"><Trash2 size={10}/></button>
+                              )}
+                            </div>
+                            {block.type === "text" ? (
+                              <div className="relative">
+                                <textarea
+                                  value={block.content}
+                                  onChange={(e) => { const u=[...moduleForm.lessons]; u[idx].blocks[bIdx].content=e.target.value; setModuleForm({...moduleForm, lessons: u}); }}
+                                  rows={4}
+                                  placeholder="Write content (Markdown supported)"
+                                  className="w-full px-2 py-1.5 border border-border rounded bg-surface text-xs resize-none pb-2"
+                                />
+                              </div>
+                            ) : (
+                              <input
+                                type="file"
+                                accept={block.type === "video" ? "video/*" : "*/*"}
+                                onChange={(e) => { const file = e.target.files?.[0]; if(file){ const u=[...moduleForm.lessons]; u[idx].blocks[bIdx].file=file; setModuleForm({...moduleForm, lessons: u});} }}
+                                className="w-full text-xs"
+                              />
+                            )}
+                          </div>
+                        ))}
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => { const u=[...moduleForm.lessons]; u[idx].blocks.push({type:"text", content:"", file:null}); setModuleForm({...moduleForm, lessons: u}); }} className="text-[10px] bg-surface border border-border px-2 py-1 rounded flex items-center gap-1"><FileText size={10}/> Add Text</button>
+                          <button type="button" onClick={() => { const u=[...moduleForm.lessons]; u[idx].blocks.push({type:"video", content:"", file:null}); setModuleForm({...moduleForm, lessons: u}); }} className="text-[10px] bg-surface border border-border px-2 py-1 rounded flex items-center gap-1"><Video size={10}/> Add Video</button>
+                          <button type="button" onClick={() => { const u=[...moduleForm.lessons]; u[idx].blocks.push({type:"file", content:"", file:null}); setModuleForm({...moduleForm, lessons: u}); }} className="text-[10px] bg-surface border border-border px-2 py-1 rounded flex items-center gap-1"><File size={10}/> Add File</button>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -628,6 +921,109 @@ function TutorCoursesPage() {
               <button onClick={submitModule} disabled={savingModule || !moduleForm.title} className="w-full h-12 bg-primary text-primary-foreground font-medium rounded-md hover:bg-primary-hover active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md animate-fade-in-up flex items-center justify-center gap-2" style={{ animationDelay: "0.35s" }}>
                 {savingModule ? (<><Loader2 size={16} className="animate-spin" /> Saving...</>) : "Add module"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PREVIEW MODAL */}
+      {previewLessonId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-navy/60 backdrop-blur-sm animate-overlay-in" onClick={() => setPreviewLessonId(null)} />
+          <div className="relative bg-surface-card w-full max-w-4xl max-h-[85vh] rounded-xl shadow-2xl flex flex-col overflow-hidden animate-zoom-in">
+            <div className="px-5 py-4 border-b border-border flex justify-between items-center bg-surface">
+              <h3 className="font-bold flex items-center gap-2"><Eye size={16} /> Learner Preview</h3>
+              <button onClick={() => setPreviewLessonId(null)} className="text-text-secondary hover:text-text-primary"><X size={18} /></button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1 bg-white">
+              <div className="p-10 border-2 border-dashed border-border rounded-xl text-center text-text-secondary">
+                <BookOpen size={48} className="mx-auto mb-4 opacity-20" />
+                <p>Simulating learner view for Lesson ID: {previewLessonId}</p>
+                <p className="text-xs mt-2 opacity-60">This modal simulates fetching `/api/v1/cms/lessons/{previewLessonId}/preview`</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ANALYTICS MODAL */}
+      {analyticsLessonId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-navy/60 backdrop-blur-sm animate-overlay-in" onClick={() => setAnalyticsLessonId(null)} />
+          <div className="relative bg-surface-card w-full max-w-md rounded-xl shadow-2xl overflow-hidden animate-zoom-in">
+            <div className="px-5 py-4 border-b border-border flex justify-between items-center bg-surface">
+              <h3 className="font-bold flex items-center gap-2"><BarChart size={16} /> Lesson Analytics</h3>
+              <button onClick={() => setAnalyticsLessonId(null)} className="text-text-secondary hover:text-text-primary"><X size={18} /></button>
+            </div>
+            <div className="p-6">
+              {!lessonAnalytics ? (
+                <div className="flex justify-center p-10"><Loader2 className="animate-spin text-primary" /></div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-surface p-4 rounded-lg border border-border text-center">
+                    <div className="text-xs text-text-secondary uppercase font-semibold tracking-wider">Completion Rate</div>
+                    <div className="text-3xl font-bold text-success mt-1">
+                      {lessonAnalytics.completion_rate !== undefined ? `${Math.round(lessonAnalytics.completion_rate * 100)}%` : "0%"}
+                    </div>
+                  </div>
+                  <div className="bg-surface p-4 rounded-lg border border-border text-center">
+                    <div className="text-xs text-text-secondary uppercase font-semibold tracking-wider">Views</div>
+                    <div className="text-3xl font-bold text-primary mt-1">{lessonAnalytics.views || 0}</div>
+                  </div>
+                  <div className="bg-surface p-4 rounded-lg border border-border text-center col-span-2">
+                    <div className="text-xs text-text-secondary uppercase font-semibold tracking-wider">Avg Time Spent</div>
+                    <div className="text-2xl font-bold text-text-primary mt-1">{lessonAnalytics.avg_time_spent || "0m"}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RAG MODAL */}
+      {ragModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-navy/60 backdrop-blur-sm animate-overlay-in" onClick={() => setRagModalOpen(null)} />
+          <div className="relative bg-surface-card w-full max-w-lg rounded-xl shadow-2xl flex flex-col overflow-hidden animate-zoom-in">
+            <div className="px-5 py-4 border-b border-border flex justify-between items-center bg-surface">
+              <h3 className="font-bold flex items-center gap-2"><FileText size={16} /> Upload RAG Content</h3>
+              <button onClick={() => setRagModalOpen(null)} className="text-text-secondary hover:text-text-primary"><X size={18} /></button>
+            </div>
+            <div className="p-6 space-y-4 bg-surface-card">
+              <p className="text-sm text-text-secondary leading-relaxed">
+                Paste raw text directly from your document, or upload a supported text-based file.
+              </p>
+              <textarea
+                value={ragText}
+                onChange={(e) => setRagText(e.target.value)}
+                placeholder="Paste content here..."
+                className="w-full h-48 px-4 py-3 border border-border rounded-lg bg-surface text-sm resize-none focus:border-primary focus:ring-2 focus:ring-primary/10 outline-none transition-all"
+              />
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={handleRagSubmitText}
+                  disabled={!ragText.trim()}
+                  className="flex-1 bg-primary text-primary-foreground font-medium h-11 rounded-md hover:bg-primary-hover disabled:opacity-50 transition-colors shadow-sm"
+                >
+                  Submit Text
+                </button>
+                <div className="relative flex-1">
+                  <input 
+                    type="file" 
+                    accept=".txt,.md,.csv" 
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleRagUpload(ragModalOpen, file);
+                      e.target.value = '';
+                    }} 
+                  />
+                  <div className="w-full h-11 border border-border rounded-md flex items-center justify-center text-sm font-medium hover:bg-surface transition-colors cursor-pointer text-text-primary shadow-sm bg-surface-card">
+                    Or upload .txt / .md
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

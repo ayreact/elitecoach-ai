@@ -6,6 +6,11 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+prc.pdf
+prc_extracted.txt
+openapi.json
+api_doc.md
+CHANGELOG.md
 
 node_modules
 dist

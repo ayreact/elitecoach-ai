@@ -6,6 +6,9 @@ import {
     Scripts,
 } from "@tanstack/react-router";
 import { EliteToaster } from "@/components/EliteToaster";
+import { useEffect } from "react";
+import { identityApi, unwrapApiData } from "@/lib/api-client";
+import { useAuthStore, AuthUser } from "@/lib/stores";
 
 import appCss from "../styles.css?url";
 
@@ -97,6 +100,32 @@ function RootShell({ children }: { children: React.ReactNode }) {
 }
 
 function RootComponent() {
+    const isLoggedIn = useAuthStore((s) => s.isLoggedIn);
+    const logout = useAuthStore((s) => s.logout);
+    const setUser = useAuthStore((s) => s.setUser);
+    const user = useAuthStore((s) => s.user);
+
+    useEffect(() => {
+        if (!isLoggedIn) return;
+        identityApi
+            .get("/api/v1/auth/me")
+            .then((res) => {
+                const rawData = unwrapApiData<any>(res.data);
+                if (rawData && rawData.email) {
+                    const mappedData = {
+                        ...rawData,
+                        organizationId: rawData.org_id || rawData.organizationId || rawData.orgId,
+                    };
+                    setUser({ ...useAuthStore.getState().user, ...mappedData } as AuthUser);
+                }
+            })
+            .catch((err) => {
+                if (err?.response?.status === 401) {
+                    logout();
+                }
+            });
+    }, [isLoggedIn, logout, setUser]);
+
     return (
         <>
             <Outlet />
