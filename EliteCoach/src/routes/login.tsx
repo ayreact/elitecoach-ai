@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { redirectIfLoggedIn } from "@/lib/auth-guard";
-import { useState, FormEvent } from "react";
+import { useState, FormEvent, useEffect } from "react";
 import { AuthLayout } from "@/components/AuthLayout";
 import {
   identityApi,
@@ -39,11 +39,30 @@ export const Route = createFileRoute("/login")({
 function LoginPage() {
   const navigate = useNavigate();
   const setSession = useAuthStore((s) => s.setSession);
+  const isLoggedIn = useAuthStore((s) => s.isLoggedIn);
+  const user = useAuthStore((s) => s.user);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      const roles = user?.roles ?? [];
+      const isTutor = roles.includes("tutor_author") || roles.includes("tutor_responder") || (user as any)?.userType === "TUTOR";
+      const isOrgAdmin = roles.includes("enterprise_admin") || (user as any)?.userType === "ORG_ADMIN";
+      
+      if (isTutor) {
+        if (roles.includes("tutor_author")) navigate({ to: "/tutor/courses" });
+        else navigate({ to: "/tutor/inbox" });
+      } else if (isOrgAdmin) {
+        navigate({ to: "/enterprise/dashboard" });
+      } else {
+        navigate({ to: "/dashboard" });
+      }
+    }
+  }, [isLoggedIn, user, navigate]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

@@ -28,10 +28,15 @@ function LoginPage() {
       await login(data);
       window.location.href = '/';
     } catch (err: any) {
-      setError(
-        err.response?.data?.detail || 
-        'Invalid credentials. Please check your username and password.'
-      );
+      let errorMessage = 'Invalid credentials. Please check your username and password.';
+      if (err.response?.data?.detail) {
+        errorMessage = err.response.data.detail;
+      } else if (err instanceof Error && !err.message.includes('status code')) {
+        errorMessage = err.message;
+      } else if (typeof err === 'string') {
+        errorMessage = err;
+      }
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }
