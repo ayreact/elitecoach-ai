@@ -1,9 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { redirectIfLoggedIn } from "@/lib/auth-guard";
-import { useState, FormEvent } from "react";
+import { useState, FormEvent, useEffect } from "react";
 import { AuthLayout } from "@/components/AuthLayout";
 import { identityApi, extractErrorMessage } from "@/lib/api-client";
 import { toast } from "sonner";
+import { useAuthStore } from "@/lib/stores";
 import { X } from "lucide-react";
 
 export const Route = createFileRoute("/register")({
@@ -33,6 +34,26 @@ function RegisterPage() {
   const [agreeNdpr, setAgreeNdpr] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
+
+  const isLoggedIn = useAuthStore((s) => s.isLoggedIn);
+  const user = useAuthStore((s) => s.user);
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      const roles = user?.roles ?? [];
+      const isTutor = roles.includes("tutor_author") || roles.includes("tutor_responder") || (user as any)?.userType === "TUTOR";
+      const isOrgAdmin = roles.includes("enterprise_admin") || (user as any)?.userType === "ORG_ADMIN";
+      
+      if (isTutor) {
+        if (roles.includes("tutor_author")) navigate({ to: "/tutor/courses" });
+        else navigate({ to: "/tutor/inbox" });
+      } else if (isOrgAdmin) {
+        navigate({ to: "/enterprise/dashboard" });
+      } else {
+        navigate({ to: "/dashboard" });
+      }
+    }
+  }, [isLoggedIn, user, navigate]);
 
   const update = (k: keyof typeof form, v: string) =>
     setForm((s) => ({ ...s, [k]: v }));

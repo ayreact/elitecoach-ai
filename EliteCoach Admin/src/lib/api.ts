@@ -21,7 +21,11 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    // Prevent infinite loops by not dispatching unauthorized events for login/logout endpoints
+    const isAuthEndpoint = error.config?.url?.includes('/api/v1/auth/login') || 
+                           error.config?.url?.includes('/api/v1/auth/logout');
+                           
+    if (error.response?.status === 401 && !isAuthEndpoint) {
       console.error('Unauthorized, dispatching logout event...');
       // Dispatch a custom event so the auth provider can log the user out
       window.dispatchEvent(new CustomEvent('auth:unauthorized'));

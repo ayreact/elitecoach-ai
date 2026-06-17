@@ -34,6 +34,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     try {
       const userData = await authApi.getMe();
+      
+      console.log('===== DEBUG: User Profile from Backend =====');
+      console.log(userData);
+      console.log('==========================================');
+
       // Ensure the user actually has the platform_admin role
       // Note: If the backend doesn't return roles yet, we'll bypass this check temporarily
       // or assume successful login means they have access.
@@ -50,13 +55,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('admin_token');
       setIsAuthenticated(false);
       setUser(null);
+      throw error;
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadUser();
+    loadUser().catch(() => {
+      // Ignore error on initial load since it just means they are unauthenticated
+    });
 
     // Listen for unauthorized events from the API interceptor
     const handleUnauthorized = () => {
