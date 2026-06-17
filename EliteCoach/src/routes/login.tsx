@@ -44,7 +44,6 @@ function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [overrideRole, setOverrideRole] = useState<string>("");
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -129,11 +128,9 @@ function LoginPage() {
           pickString(rawUser.organizationId, rawUser.orgId, rawUser.org_id, data.organizationId, data.orgId, data.org_id) ??
           findNestedString(payload, ["organizationId", "orgId", "org_id"]) ??
           undefined,
-        roles: overrideRole ? overrideRole.split(',') : (
-          Array.isArray(rawUser.roles) ? rawUser.roles :
+        roles: Array.isArray(rawUser.roles) ? rawUser.roles :
           Array.isArray(data.roles) ? data.roles :
-          []
-        ),
+          [],
       };
       if (!accessToken) throw new Error("No access token returned");
       setSession({ user, accessToken, refreshToken });
@@ -226,25 +223,6 @@ function LoginPage() {
               Forgot password?
             </Link>
           </div>
-        </div>
-
-        <div>
-          <label className="label-caps text-text-secondary block mb-2">
-            Test Role Override (MVP Only)
-          </label>
-          <select
-            value={overrideRole}
-            onChange={(e) => setOverrideRole(e.target.value)}
-            className="w-full h-12 px-4 border border-border focus:border-primary outline-none transition-colors bg-surface-card cursor-pointer"
-          >
-            <option value="">Auto-detect from backend</option>
-            <option value="tutor_author,tutor_responder">Force Tutor</option>
-            <option value="enterprise_admin">Force Org Admin</option>
-            <option value="solo_learner">Force Learner</option>
-          </select>
-          <p className="text-[11px] text-text-secondary mt-1">
-            Since the backend ignores roles on registration, use this to test different dashboards.
-          </p>
         </div>
 
         <button

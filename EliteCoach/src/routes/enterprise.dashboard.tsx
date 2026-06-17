@@ -20,6 +20,7 @@ import {
 
 interface OrgDashboard {
   total_learners?: number;
+  learner_count?: number;
   pct_completed?: number;
   avg_score?: number;
   pct_at_risk?: number;
@@ -198,7 +199,7 @@ function OrgDashboardPage() {
   const stats = [
     {
       label: "Active learners",
-      value: data?.total_learners ?? orgDetails?.activeLearnersCount ?? "—",
+      value: data?.total_learners ?? data?.learner_count ?? orgDetails?.activeLearnersCount ?? "—",
       accent: "bg-navy",
     },
     {
@@ -436,7 +437,7 @@ function OrgDashboardPage() {
                 <div className="flex justify-between border-b border-border pb-2.5">
                   <span className="text-text-secondary">Total Budget:</span>
                   <span className="font-bold text-primary">
-                    {budget?.currency || "₦"}{(budget?.budget_ngn ?? 0).toLocaleString()}
+                    {budget?.currency || "₦"}{(budget?.budget_ngn ?? budget?.total_budget_ngn ?? 0).toLocaleString()}
                   </span>
                 </div>
                 <div className="flex justify-between border-b border-border pb-2.5">
